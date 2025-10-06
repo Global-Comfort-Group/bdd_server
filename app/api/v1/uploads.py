@@ -9,7 +9,7 @@ from app.core.database import get_async_session
 from app.models.property import PropertyAttachment
 from app.schemas.property import PropertyAttachmentRead
 from app.services.file_storage import file_storage_service
-from app.api.v1.auth import current_active_user
+from app.api.v1.auth import get_current_user
 from app.models.user import User
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
 async def upload_property_attachment(
     property_id: int,
     file: UploadFile = File(...),
-    current_user: User = Depends(current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
     """
@@ -80,7 +80,7 @@ async def upload_property_attachment(
 @router.delete("/attachment/{attachment_id}")
 async def delete_property_attachment(
     attachment_id: int,
-    current_user: User = Depends(current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
     """
@@ -153,7 +153,7 @@ async def get_attachment_thumbnail(
 @router.post("/test-upload")
 async def test_cloudinary_upload(
     file: UploadFile = File(...),
-    current_user: User = Depends(current_active_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Test endpoint for Cloudinary uploads (for development/testing).

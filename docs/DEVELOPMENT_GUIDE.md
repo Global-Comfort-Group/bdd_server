@@ -22,7 +22,7 @@ bdd_server/
 │   │   ├── __init__.py            # Model exports
 │   │   ├── enums.py               # Shared enums (PropertyStatus, UserRole, etc.)
 │   │   ├── property.py            # Property & PropertyAttachment models
-│   │   ├── user.py                # User model with FastAPI-Users
+│   │   ├── user.py                # User model with custom auth
 │   │   └── workflow.py            # WorkflowHistory model
 │   ├── schemas/                   # Pydantic models for API serialization
 │   │   ├── __init__.py            # Schema exports
@@ -56,7 +56,7 @@ Contains all REST API endpoints organized by feature:
 
 #### **`auth.py`** - Authentication & User Management
 - **Purpose**: User registration, login, JWT token management
-- **Key Features**: FastAPI-Users integration, role-based access control
+- **Key Features**: JWT authentication with account approval, role-based access control
 - **Endpoints**:
   - `POST /api/v1/auth/register` - User registration
   - `POST /api/v1/auth/jwt/login` - User login
@@ -145,7 +145,7 @@ Contains all REST API endpoints organized by feature:
 - **UserRole**: ADMIN, MANAGER, AGENT, REVIEWER
 
 #### **`user.py`** - User Model
-- **Purpose**: User accounts with FastAPI-Users integration
+- **Purpose**: User accounts with custom authentication
 - **Key Features**: Role-based access, company association, audit fields
 - **Relationships**: One-to-many with properties (submitted/reviewed)
 
@@ -182,7 +182,7 @@ Contains all REST API endpoints organized by feature:
 - **UserRead**: User profile response
 - **UserCreate**: User registration payload
 - **UserUpdate**: User update payload
-- Based on FastAPI-Users schemas with custom fields
+- Custom schemas with Philippines-specific validations
 
 #### **`workflow.py`** - Workflow & Duplicate Schemas
 - **StatusUpdateRequest**: Status change payload
@@ -194,7 +194,7 @@ Contains all REST API endpoints organized by feature:
 ### **`app/services/`** - Business Logic Layer
 
 #### **`auth.py`** - Authentication Service
-- **Purpose**: FastAPI-Users integration and user management
+- **Purpose**: Custom JWT authentication and user management
 - **Key Features**: User database adapter, authentication backend
 - **Functions**:
   - User creation and management

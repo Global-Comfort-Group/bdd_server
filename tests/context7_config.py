@@ -106,7 +106,8 @@ class TestContext:
         
         # Extract token from cookies or headers
         # For testing, we'll generate a token manually
-        from app.api.v1.auth import get_jwt_strategy
+        from app.api.v1.auth import create_access_token
+        from datetime import timedelta
         from sqlalchemy import select
         from app.models.user import User
         

@@ -87,24 +87,21 @@ async def admin_token(client: AsyncClient):
     response = await client.post("/api/v1/auth/jwt/login", data=login_data)
     assert response.status_code == 204
     
-    # Extract token from cookie or header
-    # For testing purposes, we'll create a token manually
-    from app.services.auth import get_user_manager
-    from app.api.deps import get_user_db
-    from app.api.v1.auth import auth_backend
-    
-    # Get user
+    # Create token manually for testing
     from sqlalchemy import select
     from app.models.user import User
+    from app.api.v1.auth import create_access_token
+    from datetime import timedelta
     
     async with TestSessionLocal() as session:
         result = await session.execute(select(User).where(User.email == "admin@test.com"))
         user = result.scalar_one()
         
-        # Generate token
-        from app.api.v1.auth import get_jwt_strategy
-        jwt_strategy = get_jwt_strategy()
-        token = await jwt_strategy.write_token(user)
+        # Generate token using simple auth
+        token = create_access_token(
+            data={"sub": user.email, "user_id": user.id, "role": user.role},
+            expires_delta=timedelta(minutes=30)
+        )
         
         return token
 
@@ -132,9 +129,13 @@ async def agent_token(client: AsyncClient):
         result = await session.execute(select(User).where(User.email == "agent@test.com"))
         user = result.scalar_one()
         
-        from app.api.v1.auth import get_jwt_strategy
-        jwt_strategy = get_jwt_strategy()
-        token = await jwt_strategy.write_token(user)
+        # Generate token using simple auth
+        from app.api.v1.auth import create_access_token
+        from datetime import timedelta
+        token = create_access_token(
+            data={"sub": user.email, "user_id": user.id, "role": user.role},
+            expires_delta=timedelta(minutes=30)
+        )
         
         return token
 

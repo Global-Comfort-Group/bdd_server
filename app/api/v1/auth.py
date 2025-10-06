@@ -1,65 +1,280 @@
-from fastapi import APIRouter
-from fastapi_users import FastAPIUsers
-from fastapi_users.authentication import (
-    AuthenticationBackend,
-    BearerTransport,
-    JWTStrategy,
-)
+"""
+Authentication endpoints for BDD Property Tracker
+Provides JWT-based authentication with account approval workflow
+"""
+from datetime import datetime, timedelta
+from typing import Annotated, Optional
+
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr, field_validator
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import get_async_session
 from app.models.user import User
-from app.schemas.user import UserCreate, UserRead, UserUpdate
-from app.services.auth import get_user_manager
+from app.models.enums import UserRole, AccountStatus
+from app.utils.activity_logger import log_login
 
-# Bearer transport
-bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
+router = APIRouter(prefix="/auth", tags=["auth"])
 
-# JWT strategy function
-def get_jwt_strategy() -> JWTStrategy:
-    return JWTStrategy(
-        secret=settings.SECRET_KEY,
-        lifetime_seconds=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+
+# Registration schema
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str
+    firstName: str
+    middleName: Optional[str] = None
+    lastName: str
+    role: UserRole = UserRole.AGENT
+    company: Optional[str] = None
+    phone: str
+    
+    @field_validator('phone')
+    @classmethod
+    def validate_philippines_phone(cls, v: str) -> str:
+        import re
+        # Philippines phone number patterns:
+        # Mobile: 09XXXXXXXXX, +639XXXXXXXXX, 639XXXXXXXXX (starts with 8 or 9)
+        # Landline: 0XXXXXXXX, +63XXXXXXXX, 63XXXXXXXX (area codes 2-8, 7-8 digits after area code)
+        mobile_pattern = r'^(\+63|63|0)?[89]\d{9}$'
+        landline_pattern = r'^(\+63|63|0)?[2-8]\d{7,8}$'
+        
+        if not (re.match(mobile_pattern, v) or re.match(landline_pattern, v)):
+            raise ValueError('Please enter a valid Philippines phone number (e.g., 09171234567, +639171234567, or 021234567)')
+        return v
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against its hash."""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def hash_password(password: str) -> str:
+    """Hash a password."""
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    """Create a JWT access token."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
+    return encoded_jwt
+
+async def get_user_by_email(db: AsyncSession, email: str):
+    """Get user by email."""
+    from sqlalchemy import select
+    from app.models.user import User
+    
+    stmt = select(User).where(User.email == email)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+async def authenticate_user(db: AsyncSession, email: str, password: str):
+    """Authenticate user with email and password."""
+    user = await get_user_by_email(db, email)
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    
+    # Check if account is approved
+    if user.account_status != AccountStatus.APPROVED:
+        return "pending_approval" if user.account_status == AccountStatus.PENDING else "rejected"
+    
+    return user
+
+@router.post("/register")
+async def register_user(
+    user_data: UserRegister,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Register a new user."""
+    # Check if user already exists
+    existing_user = await get_user_by_email(db, user_data.email)
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    # Create new user
+    hashed_password = hash_password(user_data.password)
+    
+    new_user = User(
+        email=user_data.email,
+        hashed_password=hashed_password,
+        first_name=user_data.firstName,
+        middle_name=user_data.middleName if user_data.middleName else None,
+        last_name=user_data.lastName,
+        role=user_data.role,
+        company=user_data.company if user_data.company else None,
+        phone=user_data.phone,
+        is_active=True,
+        is_superuser=False,
+        is_verified=False,
+        account_status=AccountStatus.PENDING
     )
+    
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    
+    return {
+        "message": "Registration submitted successfully. Your account is pending admin approval.",
+        "user": {
+            "id": new_user.id,
+            "email": new_user.email,
+            "first_name": new_user.first_name,
+            "last_name": new_user.last_name,
+            "role": new_user.role,
+            "company": new_user.company,
+            "account_status": new_user.account_status,
+            "is_active": new_user.is_active
+        }
+    }
 
-# Authentication backend
-auth_backend = AuthenticationBackend(
-    name="jwt",
-    transport=bearer_transport,
-    get_strategy=get_jwt_strategy,
-)
+@router.post("/login")
+async def login_for_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    request: Request,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Login endpoint that returns a JWT token."""
+    user = await authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Handle account approval status
+    if user == "pending_approval":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is pending admin approval. Please wait for approval before logging in.",
+        )
+    elif user == "rejected":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been rejected by an administrator.",
+        )
+    
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email, "user_id": user.id, "role": user.role}, 
+        expires_delta=access_token_expires
+    )
+    
+    # Log successful login
+    await log_login(
+        db=db,
+        user_id=user.id,
+        user_email=user.email,
+        request=request
+    )
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "first_name": user.first_name,
+            "middle_name": user.middle_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "company": user.company,
+            "phone": user.phone,
+            "is_active": user.is_active
+        }
+    }
 
-# FastAPIUsers instance
-fastapi_users = FastAPIUsers[User, int](get_user_manager, [auth_backend])
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Get current user from JWT token."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        print(f"🔑 Decoding JWT token...")
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        print(f"🔑 JWT payload: {payload}")
+        email: str = payload.get("sub")
+        if email is None:
+            print(f"❌ No email in JWT payload")
+            raise credentials_exception
+        print(f"🔑 Looking up user by email: {email}")
+    except jwt.PyJWTError as e:
+        print(f"❌ JWT decode error: {e}")
+        raise credentials_exception
+        
+    user = await get_user_by_email(db, email=email)
+    if user is None:
+        print(f"❌ User not found in database: {email}")
+        raise credentials_exception
+    
+    print(f"✅ User found: {user.email} (ID: {user.id})")
+    return user
 
-# Current user dependencies
-current_active_user = fastapi_users.current_user(active=True)
-current_superuser = fastapi_users.current_user(active=True, superuser=True)
+async def get_optional_token(request) -> Optional[str]:
+    """Extract token from Authorization header if present."""
+    from fastapi import Request
+    authorization = request.headers.get("Authorization")
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.split(" ")[1]
+    return None
 
-# Auth router
-auth_router = APIRouter()
-auth_router.include_router(
-    fastapi_users.get_auth_router(auth_backend), prefix="/jwt", tags=["auth"]
-)
-auth_router.include_router(
-    fastapi_users.get_register_router(UserRead, UserCreate),
-    prefix="",
-    tags=["auth"],
-)
-auth_router.include_router(
-    fastapi_users.get_reset_password_router(),
-    prefix="",
-    tags=["auth"],
-)
-auth_router.include_router(
-    fastapi_users.get_verify_router(UserRead),
-    prefix="",
-    tags=["auth"],
-)
+async def get_current_user_optional(
+    request: Request,
+    db: AsyncSession = Depends(get_async_session)
+) -> Optional[User]:
+    """Get current user from JWT token, return None if not authenticated."""
+    from fastapi import Request
+    
+    token = await get_optional_token(request)
+    if not token:
+        return None
+        
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        email: str = payload.get("sub")
+        if email is None:
+            return None
+            
+        user = await get_user_by_email(db, email=email)
+        return user
+    except jwt.PyJWTError:
+        return None
 
-# Users router
-users_router = APIRouter()
-users_router.include_router(
-    fastapi_users.get_users_router(UserRead, UserUpdate),
-    prefix="/users",
-    tags=["users"],
-)
+@router.get("/me")
+async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
+    """Get current user information."""
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "first_name": current_user.first_name,
+        "middle_name": current_user.middle_name,
+        "last_name": current_user.last_name,
+        "role": current_user.role,
+        "company": current_user.company,
+        "phone": current_user.phone,
+        "is_active": current_user.is_active
+    }

@@ -1,5 +1,5 @@
 import math
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from fuzzywuzzy import fuzz
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -272,3 +272,72 @@ class DuplicateDetectionService:
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         
         return R * c
+    
+    async def mark_property_as_duplicate(
+        self,
+        property_id: int,
+        duplicate_of_id: int,
+        notes: Optional[str] = None
+    ) -> Property:
+        """Mark a property as a duplicate of another property"""
+        stmt = (
+            select(Property)
+            .options(
+                selectinload(Property.submitted_by),
+                selectinload(Property.reviewer)
+            )
+            .where(Property.id == property_id)
+        )
+        result = await self.db.execute(stmt)
+        property_obj = result.scalar_one_or_none()
+        
+        if not property_obj:
+            raise ValueError(f"Property {property_id} not found")
+        
+        # Verify the original property exists
+        original_stmt = select(Property).where(Property.id == duplicate_of_id)
+        original_result = await self.db.execute(original_stmt)
+        original_property = original_result.scalar_one_or_none()
+        
+        if not original_property:
+            raise ValueError(f"Original property {duplicate_of_id} not found")
+        
+        # Mark as duplicate
+        property_obj.is_duplicate = True
+        property_obj.duplicate_of_id = duplicate_of_id
+        property_obj.duplicate_notes = notes
+        
+        await self.db.commit()
+        await self.db.refresh(property_obj)
+        
+        return property_obj
+    
+    async def check_and_notify_duplicates(
+        self,
+        property_data: PropertyCreate,
+        user_id: int,
+        threshold: float = 0.75
+    ) -> List[DuplicateResult]:
+        """
+        Check for duplicates and create notifications if found.
+        Returns list of duplicates found.
+        """
+        duplicates = await self.check_duplicates(property_data, threshold)
+        
+        if duplicates:
+            # Import notification service
+            from app.services.notification import NotificationService
+            notification_service = NotificationService(self.db)
+            
+            # Create notification for high-confidence duplicates
+            for duplicate in duplicates:
+                if duplicate.similarity_score >= threshold:
+                    await notification_service.create_duplicate_notification(
+                        user_id=user_id,
+                        property_id=None,  # Property not created yet
+                        duplicate_property_id=duplicate.property_id,
+                        similarity_score=duplicate.similarity_score,
+                        match_reasons=duplicate.match_reasons
+                    )
+        
+        return duplicates

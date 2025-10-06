@@ -15,6 +15,9 @@ from app.api.admin.admin_auth import current_admin_user
 
 router = APIRouter(prefix="/dashboard", tags=["admin-dashboard"])
 
+# Add a general stats router without prefix for /admin/stats endpoint
+stats_router = APIRouter(tags=["admin-stats"])
+
 
 @router.get("/system-stats")
 async def get_system_statistics(
@@ -110,5 +113,65 @@ async def get_system_statistics(
             "users_by_role": users_by_role,
             "top_active_users": top_active_users
         },
+        "generated_at": datetime.utcnow()
+    }
+
+
+@stats_router.get("/stats")
+async def get_admin_stats(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(current_admin_user),
+):
+    """Get general admin statistics for the admin panel overview."""
+    # Get basic counts
+    total_users_stmt = select(func.count(User.id))
+    total_users_result = await db.execute(total_users_stmt)
+    total_users = total_users_result.scalar()
+    
+    active_users_stmt = select(func.count(User.id)).where(User.is_active == True)
+    active_users_result = await db.execute(active_users_stmt)
+    active_users = active_users_result.scalar()
+    
+    total_properties_stmt = select(func.count(Property.id))
+    total_properties_result = await db.execute(total_properties_stmt)
+    total_properties = total_properties_result.scalar()
+    
+    return {
+        "total_users": total_users,
+        "active_users": active_users,
+        "total_properties": total_properties,
+        "generated_at": datetime.utcnow()
+    }
+
+
+@stats_router.get("/properties/stats")
+async def get_admin_property_stats(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(current_admin_user),
+):
+    """Get property statistics for admin panel."""
+    total_properties_stmt = select(func.count(Property.id))
+    total_properties_result = await db.execute(total_properties_stmt)
+    total_properties = total_properties_result.scalar()
+    
+    # Properties by type
+    type_stmt = (
+        select(Property.property_type, func.count(Property.id))
+        .group_by(Property.property_type)
+    )
+    type_result = await db.execute(type_stmt)
+    properties_by_type = dict(type_result.all())
+    
+    # Recent properties (last 30 days)
+    from datetime import datetime, timedelta
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    recent_properties_stmt = select(func.count(Property.id)).where(Property.created_at >= thirty_days_ago)
+    recent_properties_result = await db.execute(recent_properties_stmt)
+    recent_properties = recent_properties_result.scalar()
+    
+    return {
+        "total_properties": total_properties,
+        "properties_by_type": properties_by_type,
+        "recent_properties_30_days": recent_properties,
         "generated_at": datetime.utcnow()
     }

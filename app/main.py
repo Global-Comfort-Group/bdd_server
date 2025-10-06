@@ -5,12 +5,19 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from app.core.config import settings
-from app.api.v1.auth import auth_router, users_router
-from app.api.v1.simple_auth import router as simple_auth_router
+from app.api.v1.auth import router as auth_router
+from app.api.v1.properties_simple import router as properties_simple_router
 from app.api.v1.properties import router as properties_router
 from app.api.v1.duplicates import router as duplicates_router
+from app.api.v1.notifications import router as notifications_router
+# Using simple nego_tables for now - it fetches properties from database
+# TODO: Migrate to production nego_tables.py once async/sync issues are resolved
+from app.api.v1.nego_tables_simple import router as nego_tables_router
+# from app.api.v1.draft_nego_tables import router as draft_nego_tables_router
+from app.api.v1.negotiation_chronicles import router as negotiation_chronicles_router
 from app.api.admin import admin_router
 from app.api.v1.uploads import router as uploads_router
+from app.api.v1.address import router as address_router
 
 
 @asynccontextmanager
@@ -38,13 +45,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Set up CORS
+# Set up CORS - More permissive for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.get_cors_origins(),
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],  # Explicitly include OPTIONS
+    allow_headers=["*"],  # Allow all headers
 )
 
 # Mount static files for uploads
@@ -73,26 +80,18 @@ async def root():
     }
 
 # Include routers
-# Temporary simple auth router (working)
+# Authentication
 app.include_router(
-    simple_auth_router,
+    auth_router,
     prefix=settings.API_V1_PREFIX,
-    tags=["simple-auth"]
+    tags=["auth"]
 )
 
-# FastAPI-Users auth router (currently broken)
-# app.include_router(
-#     auth_router,
-#     prefix=f"{settings.API_V1_PREFIX}/auth",
-#     tags=["authentication"]
-# )
-
-# FastAPI-Users users router (currently broken)
-# app.include_router(
-#     users_router,
-#     prefix=settings.API_V1_PREFIX,
-#     tags=["users"]
-# )
+app.include_router(
+    properties_simple_router,
+    prefix=f"{settings.API_V1_PREFIX}/properties-submit",
+    tags=["properties-submit"]
+)
 
 app.include_router(
     properties_router,
@@ -106,6 +105,30 @@ app.include_router(
     tags=["duplicates"]
 )
 
+app.include_router(
+    notifications_router,
+    prefix=settings.API_V1_PREFIX,
+    tags=["notifications"]
+)
+
+app.include_router(
+    nego_tables_router,
+    prefix=f"{settings.API_V1_PREFIX}/nego-tables",
+    tags=["nego-tables"]
+)
+
+app.include_router(
+    negotiation_chronicles_router,
+    prefix=f"{settings.API_V1_PREFIX}/negotiation-chronicles",
+    tags=["negotiation-chronicles"]
+)
+
+# app.include_router(
+#     draft_nego_tables_router,
+#     prefix=f"{settings.API_V1_PREFIX}/draft-nego-tables",
+#     tags=["draft-nego-tables"]
+# )
+
 # Admin Portal - Separate from property management API
 app.include_router(
     admin_router,
@@ -116,6 +139,12 @@ app.include_router(
     uploads_router,
     prefix=settings.API_V1_PREFIX,
     tags=["uploads"]
+)
+
+app.include_router(
+    address_router,
+    prefix=f"{settings.API_V1_PREFIX}/address",
+    tags=["address"]
 )
 
 # Add exception handlers

@@ -21,7 +21,7 @@ class PropertyService:
                 selectinload(Property.submitted_by),
                 selectinload(Property.reviewer),
                 selectinload(Property.attachments),
-                selectinload(Property.workflow_history).selectinload(property.changed_by)
+                selectinload(Property.workflow_history)
             )
             .where(Property.id == property_id)
         )
@@ -36,6 +36,7 @@ class PropertyService:
         submitted_by_id: Optional[int] = None,
         reviewer_id: Optional[int] = None,
         property_type: Optional[str] = None,
+        transaction_status: Optional[str] = None,
     ) -> List[Property]:
         """Get properties with optional filtering."""
         stmt = (
@@ -53,6 +54,8 @@ class PropertyService:
             stmt = stmt.where(Property.reviewer_id == reviewer_id)
         if property_type:
             stmt = stmt.where(Property.property_type == property_type)
+        if transaction_status:
+            stmt = stmt.where(Property.transaction_status == transaction_status)
             
         result = await self.db.execute(stmt)
         return result.scalars().all()

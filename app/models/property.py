@@ -4,6 +4,7 @@ from enum import Enum
 from typing import List, Optional
 
 from sqlalchemy import (
+    Boolean,
     DateTime, 
     Float, 
     ForeignKey, 
@@ -16,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.models.enums import PropertyStatus, PropertyType
+from app.models.enums import PropertyStatus, PropertyType, TransactionStatus
 
 
 class Property(Base):
@@ -27,6 +28,18 @@ class Property(Base):
     address: Mapped[str] = mapped_column(String(500), nullable=False)
     latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    
+    # Google Places API data
+    place_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    
+    # Detailed address components (Google Places format)
+    street: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    barangay_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    city_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    province_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    region_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    zip_code: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    country: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="Philippines")
     lot_area: Mapped[float] = mapped_column(Float, nullable=False)
     property_type: Mapped[PropertyType] = mapped_column(SQLEnum(PropertyType), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
@@ -41,12 +54,22 @@ class Property(Base):
         nullable=False, 
         default="PROPERTY_SOURCING"
     )
+    transaction_status: Mapped[TransactionStatus] = mapped_column(
+        SQLEnum(TransactionStatus),
+        nullable=False,
+        default="S"  # Default to SALE
+    )
 
     # Metadata
     submitted_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
     reviewer_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("user.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Duplicate tracking
+    is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    duplicate_of_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("properties.id"), nullable=True)
+    duplicate_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     submitted_by: Mapped["User"] = relationship(
@@ -68,6 +91,24 @@ class Property(Base):
         "WorkflowHistory", 
         back_populates="property",
         cascade="all, delete-orphan"
+    )
+    nego_tables: Mapped[List["NegoTable"]] = relationship(
+        "NegoTable", 
+        back_populates="property",
+        cascade="all, delete-orphan"
+    )
+    notifications: Mapped[List["Notification"]] = relationship(
+        "Notification", 
+        foreign_keys="Notification.property_id",
+        back_populates="property",
+        cascade="all, delete-orphan"
+    )
+    
+    # Self-referential relationship for duplicates
+    duplicate_of: Mapped[Optional["Property"]] = relationship(
+        "Property",
+        remote_side="Property.id",
+        foreign_keys=[duplicate_of_id]
     )
 
 

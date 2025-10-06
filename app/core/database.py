@@ -52,3 +52,16 @@ def get_sync_session():
         yield db
     finally:
         db.close()
+
+
+# Alias for backward compatibility - use async session
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Get database session (async)"""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()

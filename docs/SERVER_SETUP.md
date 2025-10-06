@@ -6,7 +6,7 @@
 ## Tech Stack
 - **Backend**: FastAPI with Python 3.11+
 - **Database**: PostgreSQL with SQLAlchemy ORM
-- **Authentication**: JWT tokens with FastAPI-Users
+- **Authentication**: JWT tokens with custom auth implementation
 - **File Storage**: Local storage or cloud (Railway compatible)
 - **Validation**: Pydantic v2
 - **Migration**: Alembic
@@ -70,7 +70,7 @@ pydantic==2.5.0
 pydantic-settings==2.1.0
 
 # Authentication
-fastapi-users[sqlalchemy]==12.1.3
+# Authentication handled with custom JWT implementation
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6

@@ -8,7 +8,7 @@ from app.schemas.property import PropertyCreate
 from app.schemas.workflow import DuplicateCheckRequest, DuplicateResult, DuplicateMergeRequest
 from app.services.duplicate import DuplicateDetectionService
 from app.services.property import PropertyService
-from app.api.v1.auth import current_active_user
+from app.api.v1.auth import get_current_user
 
 router = APIRouter(prefix="/duplicates", tags=["duplicates"])
 
@@ -18,7 +18,7 @@ async def check_duplicates_by_property(
     property_data: PropertyCreate,
     threshold: float = 0.7,
     db: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(current_active_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Check for duplicate properties using full property data."""
     service = DuplicateDetectionService(db)
@@ -35,7 +35,7 @@ async def check_duplicates_by_criteria(
     criteria: DuplicateCheckRequest = Depends(),
     threshold: float = 0.7,
     db: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(current_active_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Check for duplicates using flexible search criteria."""
     service = DuplicateDetectionService(db)
@@ -53,14 +53,15 @@ async def mark_property_as_duplicate(
     original_property_id: int,
     notes: str = None,
     db: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(current_active_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Mark a property as a duplicate of another property."""
-    # Only BDD users can mark duplicates
-    if current_user.role.value not in ["BDD_USER"]:
+    # Only BDD users and admins can mark duplicates
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
         raise HTTPException(status_code=403, detail="Not authorized to mark duplicates")
     
     property_service = PropertyService(db)
+    duplicate_service = DuplicateDetectionService(db)
     
     # Check both properties exist
     duplicate_property = await property_service.get_property(property_id)
@@ -71,17 +72,34 @@ async def mark_property_as_duplicate(
     if not original_property:
         raise HTTPException(status_code=404, detail="Original property not found")
     
-    # For now, we'll just add a note to the property
-    # In a full implementation, you might want a separate table for duplicate relationships
     try:
-        from app.schemas.property import PropertyUpdate
-        update_data = PropertyUpdate(
-            description=f"MARKED AS DUPLICATE OF PROPERTY #{original_property_id}. " + 
-                       f"Notes: {notes or 'No additional notes'}\n\n" + 
-                       (duplicate_property.description or "")
+        # Use the new duplicate service method
+        updated_property = await duplicate_service.mark_property_as_duplicate(
+            property_id=property_id,
+            duplicate_of_id=original_property_id,
+            notes=notes
         )
         
-        updated_property = await property_service.update_property(property_id, update_data)
+        # Notify the property owner
+        from app.services.notification import NotificationService
+        from app.schemas.notification import NotificationCreate
+        from app.models.notification import NotificationType
+        
+        notification_service = NotificationService(db)
+        notification_data = NotificationCreate(
+            user_id=duplicate_property.submitted_by_id,
+            notification_type=NotificationType.DUPLICATE_DETECTED,
+            title="Property Marked as Duplicate",
+            message=(
+                f"Your property '{duplicate_property.name}' (ID: {property_id}) has been marked "
+                f"as a duplicate of property '{original_property.name}' (ID: {original_property_id}). "
+                f"Notes: {notes or 'No additional notes provided'}. "
+                f"Please contact an administrator if you have questions."
+            ),
+            property_id=property_id,
+            duplicate_property_id=original_property_id
+        )
+        await notification_service.create_notification(notification_data, send_email=True)
         
         return {
             "message": f"Property {property_id} marked as duplicate of property {original_property_id}",
@@ -96,11 +114,11 @@ async def mark_property_as_duplicate(
 async def merge_duplicate_properties(
     merge_request: DuplicateMergeRequest,
     db: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(current_active_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Merge duplicate properties into a primary property."""
-    # Only admin can perform merges
-    if current_user.role.value != "ADMIN":
+    # Only admin and BDD users can perform merges
+    if current_user.role.value not in ["ADMIN", "BDD_USER"]:
         raise HTTPException(status_code=403, detail="Not authorized to merge properties")
     
     property_service = PropertyService(db)
@@ -120,32 +138,48 @@ async def merge_duplicate_properties(
     
     # Perform merge logic
     try:
-        # In a full implementation, you would:
-        # 1. Move attachments from duplicate properties to primary
-        # 2. Merge workflow history
-        # 3. Update references in other tables
-        # 4. Archive or delete duplicate properties
+        duplicate_service = DuplicateDetectionService(db)
         
-        # For now, we'll just mark the duplicates in their descriptions
-        merge_notes = f"MERGED INTO PROPERTY #{merge_request.primary_property_id}"
-        if merge_request.merge_notes:
-            merge_notes += f". Notes: {merge_request.merge_notes}"
-        
+        # Mark each duplicate property with the new duplicate tracking fields
         merged_info = []
         for dup_property in duplicate_properties:
-            from app.schemas.property import PropertyUpdate
-            update_data = PropertyUpdate(
-                description=f"{merge_notes}\n\n{dup_property.description or ''}"
+            # Use the duplicate service to mark as duplicate
+            updated_dup = await duplicate_service.mark_property_as_duplicate(
+                property_id=dup_property.id,
+                duplicate_of_id=merge_request.primary_property_id,
+                notes=f"MERGED INTO PROPERTY #{merge_request.primary_property_id}. {merge_request.merge_notes or ''}"
             )
             
-            updated_dup = await property_service.update_property(dup_property.id, update_data)
             merged_info.append({
                 "id": dup_property.id,
                 "name": dup_property.name,
-                "status": "marked_as_merged"
+                "status": "marked_as_merged",
+                "is_duplicate": updated_dup.is_duplicate,
+                "duplicate_of_id": updated_dup.duplicate_of_id
             })
+            
+            # Notify the property owner that their property was merged
+            from app.services.notification import NotificationService
+            from app.schemas.notification import NotificationCreate
+            from app.models.notification import NotificationType
+            
+            notification_service = NotificationService(db)
+            notification_data = NotificationCreate(
+                user_id=dup_property.submitted_by_id,
+                notification_type=NotificationType.PROPERTY_MERGED,
+                title="Property Merged",
+                message=(
+                    f"Your property '{dup_property.name}' (ID: {dup_property.id}) has been merged "
+                    f"into property '{primary_property.name}' (ID: {primary_property.id}). "
+                    f"Merge notes: {merge_request.merge_notes or 'No additional notes'}. "
+                    f"All information has been consolidated into the primary property."
+                ),
+                property_id=dup_property.id,
+                duplicate_property_id=merge_request.primary_property_id
+            )
+            await notification_service.create_notification(notification_data, send_email=True)
         
-        # Update primary property description to note the merge
+        # Update primary property description to note the merge (optional, for reference)
         primary_description = primary_property.description or ""
         primary_description += f"\n\nMERGED WITH PROPERTIES: {', '.join([str(id) for id in merge_request.duplicate_property_ids])}"
         if merge_request.merge_notes:
@@ -173,7 +207,7 @@ async def calculate_property_similarity(
     property_id: int,
     comparison_property_id: int,
     db: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(current_active_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Calculate similarity score between two properties."""
     property_service = PropertyService(db)

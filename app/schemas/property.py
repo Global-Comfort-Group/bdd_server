@@ -5,8 +5,8 @@ from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, validator
 
-from app.models.enums import PropertyType, PropertyStatus
-from app.schemas.user import UserRead
+from app.models.enums import PropertyType, PropertyStatus, TransactionStatus
+from app.schemas.user import UserPublic
 from app.schemas.workflow import WorkflowHistoryRead
 
 
@@ -15,6 +15,19 @@ class PropertyBase(BaseModel):
     address: str
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    
+    # Google Places API data
+    place_id: Optional[str] = None
+    
+    # Detailed address components (Google Places format)
+    street: Optional[str] = None
+    barangay_name: Optional[str] = None
+    city_name: Optional[str] = None
+    province_name: Optional[str] = None
+    region_name: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: Optional[str] = "Philippines"
+    
     lot_area: float
     property_type: PropertyType
     price: Decimal
@@ -22,6 +35,7 @@ class PropertyBase(BaseModel):
     zoning_classification: str
     title_number: str
     description: Optional[str] = None
+    transaction_status: TransactionStatus
 
 
 class PropertyCreate(PropertyBase):
@@ -43,6 +57,19 @@ class PropertyUpdate(BaseModel):
     address: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    
+    # Google Places API data
+    place_id: Optional[str] = None
+    
+    # Detailed address components (Google Places format)
+    street: Optional[str] = None
+    barangay_name: Optional[str] = None
+    city_name: Optional[str] = None
+    province_name: Optional[str] = None
+    region_name: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: Optional[str] = None
+    
     lot_area: Optional[float] = None
     property_type: Optional[PropertyType] = None
     price: Optional[Decimal] = None
@@ -50,6 +77,7 @@ class PropertyUpdate(BaseModel):
     zoning_classification: Optional[str] = None
     title_number: Optional[str] = None
     description: Optional[str] = None
+    transaction_status: Optional[TransactionStatus] = None
     reviewer_id: Optional[int] = None
 
     @validator('price')
@@ -73,9 +101,9 @@ class PropertyRead(PropertyBase):
     created_at: datetime
     updated_at: datetime
 
-    # Related objects
-    submitted_by: Optional[UserRead] = None
-    reviewer: Optional[UserRead] = None
+    # Related objects - using UserPublic to exclude sensitive data
+    submitted_by: Optional[UserPublic] = None
+    reviewer: Optional[UserPublic] = None
     attachments: List["PropertyAttachmentRead"] = []
     workflow_history: List[WorkflowHistoryRead] = []
 
@@ -91,8 +119,9 @@ class PropertyListRead(BaseModel):
     price: Decimal
     currency: str
     status: PropertyStatus
+    transaction_status: TransactionStatus
     created_at: datetime
-    submitted_by: Optional[UserRead] = None
+    submitted_by: Optional[UserPublic] = None
 
     class Config:
         from_attributes = True

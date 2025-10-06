@@ -64,7 +64,7 @@ This is a **BDD Property Tracker** built as a FastAPI backend with PostgreSQL. T
 ### Key Architectural Components
 
 **Authentication & Authorization**
-- JWT token-based authentication using FastAPI-Users
+- JWT token-based authentication with account approval workflow
 - Role-based access control (different user roles with varying permissions)
 - User management with company associations
 
@@ -82,7 +82,7 @@ Multi-layered duplicate detection using:
 - Similarity scoring algorithm combining multiple factors
 
 **Data Models Relationships**
-- `User` model with FastAPI-Users integration
+- `User` model with custom authentication
 - `Property` model with workflow status tracking and geographic data
 - `WorkflowHistory` for audit trails
 - `PropertyAttachment` for file management
