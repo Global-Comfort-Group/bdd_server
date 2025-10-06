@@ -1,11 +1,15 @@
 from typing import List, Optional
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
 from app.models.user import User
 from app.models.workflow import PropertyStatus
+from app.models.property import Property
+from app.models.notification import Notification
 from app.schemas.property import (
     PropertyCreate, PropertyRead, PropertyUpdate, PropertyListRead,
     PropertyAttachmentRead, PropertyType
@@ -490,11 +494,6 @@ async def get_user_dashboard_statistics(
     current_user: User = Depends(get_current_user),
 ):
     """Get dashboard statistics for the current user based on their role."""
-    from datetime import datetime, timedelta
-    from sqlalchemy import func
-    from app.models.property import Property
-    from app.models.notification import Notification
-    
     # Determine the appropriate filter based on user role
     is_admin_or_bdd = current_user.role.value in ["ADMIN", "BDD_USER"]
     
