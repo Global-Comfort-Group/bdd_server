@@ -484,6 +484,120 @@ async def list_property_attachments(
     return attachments
 
 
+@router.get("/dashboard/statistics")
+async def get_user_dashboard_statistics(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Get dashboard statistics for the current user based on their role."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+    from app.models.property import Property
+    from app.models.notification import Notification
+    
+    # Determine the appropriate filter based on user role
+    is_admin_or_bdd = current_user.role.value in ["ADMIN", "BDD_USER"]
+    
+    # Build base query
+    if is_admin_or_bdd:
+        # Admin/BDD users see all properties
+        base_query = select(Property)
+    else:
+        # Other users only see their own properties
+        base_query = select(Property).where(Property.submitted_by_id == current_user.id)
+    
+    # Total properties count
+    total_properties_query = select(func.count(Property.id))
+    if not is_admin_or_bdd:
+        total_properties_query = total_properties_query.where(Property.submitted_by_id == current_user.id)
+    total_properties_result = await db.execute(total_properties_query)
+    total_properties = total_properties_result.scalar() or 0
+    
+    # Status counts
+    from app.models.workflow import PropertyStatus
+    pending_review_query = select(func.count(Property.id)).where(
+        Property.status.in_([PropertyStatus.PROPERTY_SOURCING, PropertyStatus.PROPERTY_STUDY])
+    )
+    approved_query = select(func.count(Property.id)).where(
+        Property.status.in_([
+            PropertyStatus.NEGOTIATION,
+            PropertyStatus.DUE_DILIGENCE,
+            PropertyStatus.CONTRACT_SIGNING,
+            PropertyStatus.TAKEOVER
+        ])
+    )
+    under_negotiation_query = select(func.count(Property.id)).where(
+        Property.status == PropertyStatus.NEGOTIATION
+    )
+    
+    if not is_admin_or_bdd:
+        pending_review_query = pending_review_query.where(Property.submitted_by_id == current_user.id)
+        approved_query = approved_query.where(Property.submitted_by_id == current_user.id)
+        under_negotiation_query = under_negotiation_query.where(Property.submitted_by_id == current_user.id)
+    
+    pending_review_result = await db.execute(pending_review_query)
+    pending_review = pending_review_result.scalar() or 0
+    
+    approved_result = await db.execute(approved_query)
+    approved = approved_result.scalar() or 0
+    
+    under_negotiation_result = await db.execute(under_negotiation_query)
+    under_negotiation = under_negotiation_result.scalar() or 0
+    
+    # This week submissions
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    this_week_query = select(func.count(Property.id)).where(Property.created_at >= week_ago)
+    if not is_admin_or_bdd:
+        this_week_query = this_week_query.where(Property.submitted_by_id == current_user.id)
+    this_week_result = await db.execute(this_week_query)
+    this_week_submissions = this_week_result.scalar() or 0
+    
+    # Duplicate alerts (only for admin/BDD users)
+    duplicate_alerts = 0
+    if is_admin_or_bdd:
+        # Count properties with potential duplicates
+        # This is a placeholder - you can implement actual duplicate detection logic
+        from app.models.property import DuplicateGroup
+        try:
+            duplicate_count_query = select(func.count(func.distinct(DuplicateGroup.id)))
+            duplicate_count_result = await db.execute(duplicate_count_query)
+            duplicate_alerts = duplicate_count_result.scalar() or 0
+        except:
+            duplicate_alerts = 0
+    
+    # Get unread notifications count
+    unread_notifications_query = select(func.count(Notification.id)).where(
+        Notification.user_id == current_user.id,
+        Notification.is_read == False
+    )
+    unread_notifications_result = await db.execute(unread_notifications_query)
+    unread_notifications = unread_notifications_result.scalar() or 0
+    
+    # Get status breakdown
+    status_breakdown = {}
+    for status in PropertyStatus:
+        status_query = select(func.count(Property.id)).where(Property.status == status)
+        if not is_admin_or_bdd:
+            status_query = status_query.where(Property.submitted_by_id == current_user.id)
+        status_result = await db.execute(status_query)
+        status_count = status_result.scalar() or 0
+        if status_count > 0:
+            status_breakdown[status.value] = status_count
+    
+    return {
+        "totalProperties": total_properties,
+        "pendingReview": pending_review,
+        "approved": approved,
+        "underNegotiation": under_negotiation,
+        "thisWeekSubmissions": this_week_submissions,
+        "duplicateAlerts": duplicate_alerts,
+        "unreadNotifications": unread_notifications,
+        "statusBreakdown": status_breakdown,
+        "userRole": current_user.role.value,
+        "generatedAt": datetime.utcnow().isoformat()
+    }
+
+
 @router.patch("/{property_id}/assign-reviewer", response_model=PropertyRead)
 async def assign_reviewer(
     property_id: int,
