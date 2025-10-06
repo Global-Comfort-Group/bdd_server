@@ -75,6 +75,7 @@ async def get_system_statistics(
     # Top active users (users with most property submissions)
     top_users_stmt = (
         select(
+            User.id.label('user_id'),
             User.first_name,
             User.last_name, 
             User.email,
@@ -89,7 +90,8 @@ async def get_system_statistics(
     top_users_result = await db.execute(top_users_stmt)
     top_active_users = [
         {
-            "name": f"{row.first_name} {row.last_name}",
+            "user_id": row.user_id,
+            "full_name": f"{row.first_name} {row.last_name}",
             "email": row.email,
             "role": row.role.value,
             "property_count": row.property_count

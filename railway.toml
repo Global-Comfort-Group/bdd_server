@@ -1,0 +1,19 @@
+[build]
+builder = "dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "always"
+
+[env]
+# Environment variables will be set in Railway dashboard
+# DATABASE_URL - PostgreSQL connection string (automatically provided by Railway)
+# SECRET_KEY - JWT secret key
+# ALLOWED_ORIGINS - CORS origins
+# UPLOAD_DIRECTORY - File upload directory (default: ./uploads)
+# GOOGLE_MAPS_API_KEY - Optional Google Maps API key
+# SMTP_HOST - Optional email settings
+# SMTP_PORT - Optional email settings
+# SMTP_USER - Optional email settings 
+# SMTP_PASSWORD - Optional email settings
