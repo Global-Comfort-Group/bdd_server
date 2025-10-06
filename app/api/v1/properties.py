@@ -552,17 +552,8 @@ async def get_user_dashboard_statistics(
     this_week_submissions = this_week_result.scalar() or 0
     
     # Duplicate alerts (only for admin/BDD users)
+    # TODO: Implement actual duplicate detection logic with proper DuplicateGroup table
     duplicate_alerts = 0
-    if is_admin_or_bdd:
-        # Count properties with potential duplicates
-        # This is a placeholder - you can implement actual duplicate detection logic
-        from app.models.property import DuplicateGroup
-        try:
-            duplicate_count_query = select(func.count(func.distinct(DuplicateGroup.id)))
-            duplicate_count_result = await db.execute(duplicate_count_query)
-            duplicate_alerts = duplicate_count_result.scalar() or 0
-        except:
-            duplicate_alerts = 0
     
     # Get unread notifications count
     unread_notifications_query = select(func.count(Notification.id)).where(
