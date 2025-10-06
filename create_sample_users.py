@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 from app.core.database import AsyncSessionLocal
 from app.models.user import User
-from app.models.enums import UserRole
+from app.models.enums import UserRole, AccountStatus
 from app.core.security import get_password_hash
 
 async def create_sample_users():
@@ -78,7 +78,8 @@ async def create_sample_users():
                     phone=user_data["phone"],
                     is_active=True,
                     is_verified=True,
-                    is_superuser=(user_data["role"] == UserRole.ADMIN)
+                    is_superuser=(user_data["role"] == UserRole.ADMIN),
+                    account_status=AccountStatus.APPROVED  # IMPORTANT: Approve sample users so they can log in
                 )
                 
                 db.add(user)
