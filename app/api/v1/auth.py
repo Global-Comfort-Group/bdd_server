@@ -5,7 +5,7 @@ Provides JWT-based authentication with account approval workflow
 from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
-import jwt
+from jose import jwt
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
@@ -222,7 +222,7 @@ async def get_current_user(
             print(f"❌ No email in JWT payload")
             raise credentials_exception
         print(f"🔑 Looking up user by email: {email}")
-    except jwt.PyJWTError as e:
+    except jwt.JWTError as e:
         print(f"❌ JWT decode error: {e}")
         raise credentials_exception
         
@@ -261,7 +261,7 @@ async def get_current_user_optional(
             
         user = await get_user_by_email(db, email=email)
         return user
-    except jwt.PyJWTError:
+    except jwt.JWTError:
         return None
 
 @router.get("/me")
