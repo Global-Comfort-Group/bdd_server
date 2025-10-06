@@ -167,4 +167,5 @@ htmlcov/
 .tox/
 
 # Railway/Production deployment
-railway.toml
+railway.tomlSTAGING_CREDENTIALS.md
+
