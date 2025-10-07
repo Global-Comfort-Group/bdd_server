@@ -3,6 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+import time
+import logging
 
 from app.core.config import settings
 from app.api.v1.auth import router as auth_router
@@ -150,7 +152,6 @@ app.include_router(
 # Add exception handlers
 from fastapi import Request
 from fastapi.responses import JSONResponse
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,3 @@ async def log_requests(request: Request, call_next):
     logger.info(f"Response: {response.status_code} - {process_time:.4f}s")
     
     return response
-
-
-import time
