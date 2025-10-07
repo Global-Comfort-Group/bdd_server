@@ -77,26 +77,14 @@ async def create_nego_table(
         property_obj = result.scalar_one_or_none()
         
         if property_obj:
-            # Check permissions - only ADMIN or assigned reviewer (BDD_USER) can create nego tables
-            is_admin = current_user.role.value == "ADMIN"
-            is_assigned_reviewer = (
-                current_user.role.value == "BDD_USER" and 
-                property_obj.reviewer_id == current_user.id
-            )
+            # Check permissions - only ADMIN or BDD_USER can create nego tables
+            if current_user.role.value not in ["BDD_USER", "ADMIN"]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only BDD employees and admins can create negotiation chronicles"
+                )
             
-            if not (is_admin or is_assigned_reviewer):
-                if current_user.role.value == "BDD_USER":
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="You can only create negotiation chronicles for properties you are assigned to as a reviewer. Please contact an admin to assign you to this property."
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Only BDD employees assigned as reviewers or admins can create negotiation chronicles"
-                    )
-            
-            print(f"✅ Permission check passed - User {current_user.email} can create nego table")
+            print(f"✅ Permission check passed - User {current_user.email} ({current_user.role.value}) can create nego table")
             print(f"✅ Found property in database: {property_obj.name}")
             
             # Convert database property to dictionary format
