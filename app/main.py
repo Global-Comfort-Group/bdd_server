@@ -177,12 +177,20 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
     
     # Log request
+    print(f"📥 Request: {request.method} {request.url}")
     logger.info(f"Request: {request.method} {request.url}")
     
-    response = await call_next(request)
-    
-    # Log response
-    process_time = time.time() - start_time
-    logger.info(f"Response: {response.status_code} - {process_time:.4f}s")
-    
-    return response
+    try:
+        response = await call_next(request)
+        
+        # Log response
+        process_time = time.time() - start_time
+        print(f"📤 Response: {response.status_code} - {process_time:.4f}s")
+        logger.info(f"Response: {response.status_code} - {process_time:.4f}s")
+        
+        return response
+    except Exception as e:
+        print(f"💥 Middleware error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
