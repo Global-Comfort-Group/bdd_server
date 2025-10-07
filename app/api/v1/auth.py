@@ -83,34 +83,17 @@ async def get_user_by_email(db: AsyncSession, email: str):
 
 async def authenticate_user(db: AsyncSession, email: str, password: str):
     """Authenticate user with email and password."""
-    try:
-        print(f"🔍 Looking up user: {email}")
-        user = await get_user_by_email(db, email)
-        
-        if not user:
-            print(f"❌ User not found: {email}")
-            return False
-        
-        print(f"✅ User found: {email}, checking password...")
-        if not verify_password(password, user.hashed_password):
-            print(f"❌ Password verification failed for: {email}")
-            return False
-        
-        print(f"✅ Password verified, checking account status: {user.account_status}")
-        
-        # Check if account is approved
-        if user.account_status != AccountStatus.APPROVED:
-            status_msg = "pending_approval" if user.account_status == AccountStatus.PENDING else "rejected"
-            print(f"⚠️ Account not approved: {email} - Status: {status_msg}")
-            return status_msg
-        
-        print(f"✅ Authentication successful for: {email}")
-        return user
-    except Exception as e:
-        print(f"💥 Error in authenticate_user: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
+    user = await get_user_by_email(db, email)
+    if not user:
         return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    
+    # Check if account is approved
+    if user.account_status != AccountStatus.APPROVED:
+        return "pending_approval" if user.account_status == AccountStatus.PENDING else "rejected"
+    
+    return user
 
 @router.post("/register")
 async def register_user(
@@ -169,82 +152,61 @@ async def login_for_access_token(
     db: AsyncSession = Depends(get_async_session)
 ):
     """Login endpoint that returns a JWT token."""
-    try:
-        print(f"🔐 Login attempt for: {form_data.username}")
-        user = await authenticate_user(db, form_data.username, form_data.password)
-        print(f"🔐 Authentication result: {user}")
-        
-        if not user:
-            print(f"❌ Authentication failed for: {form_data.username}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # Handle account approval status
-        if user == "pending_approval":
-            print(f"⏳ Account pending approval: {form_data.username}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your account is pending admin approval. Please wait for approval before logging in.",
-            )
-        elif user == "rejected":
-            print(f"🚫 Account rejected: {form_data.username}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your account has been rejected by an administrator.",
-            )
-        
-        # Create access token
-        print(f"✅ Creating access token for: {form_data.username}")
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": user.email, "user_id": user.id, "role": user.role}, 
-            expires_delta=access_token_expires
-        )
-        
-        # Log successful login (don't fail login if logging fails)
-        try:
-            await log_login(
-                db=db,
-                user_id=user.id,
-                user_email=user.email,
-                request=request
-            )
-            print(f"✅ Login successful for: {form_data.username}")
-        except Exception as e:
-            # Log the error but don't fail the login
-            print(f"⚠️ Activity logging failed: {e}")
-        
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "first_name": user.first_name,
-                "middle_name": user.middle_name,
-                "last_name": user.last_name,
-                "role": user.role,
-                "company": user.company,
-                "phone": user.phone,
-                "is_active": user.is_active
-            }
-        }
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
-        raise
-    except Exception as e:
-        # Catch any unexpected errors and log them
-        print(f"💥 Login error: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
+    user = await authenticate_user(db, form_data.username, form_data.password)
+    
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login failed: {str(e)}"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Handle account approval status
+    if user == "pending_approval":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is pending admin approval. Please wait for approval before logging in.",
+        )
+    elif user == "rejected":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been rejected by an administrator.",
+        )
+    
+    # Create access token
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email, "user_id": user.id, "role": user.role}, 
+        expires_delta=access_token_expires
+    )
+    
+    # Log successful login (don't fail login if logging fails)
+    try:
+        await log_login(
+            db=db,
+            user_id=user.id,
+            user_email=user.email,
+            request=request
+        )
+    except Exception as e:
+        # Log the error but don't fail the login
+        print(f"Activity logging failed: {e}")
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "first_name": user.first_name,
+            "middle_name": user.middle_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "company": user.company,
+            "phone": user.phone,
+            "is_active": user.is_active
+        }
+    }
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
