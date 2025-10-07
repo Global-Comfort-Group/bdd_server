@@ -441,7 +441,9 @@ async def create_property(
     transactionStatus: Optional[str] = Form("S"),  # Default to SALE
     images: List[UploadFile] = File(default=[]),
     attachments: List[UploadFile] = File(default=[]),
-    authorization_letter: Optional[UploadFile] = File(None)
+    authorization_letter: Optional[UploadFile] = File(None),
+    tct: Optional[UploadFile] = File(None),
+    sketch: Optional[UploadFile] = File(None)
 ):
     """Create a new property with file uploads."""
     
@@ -456,7 +458,9 @@ async def create_property(
     print(f"💼 Transaction Status: {transactionStatus}")
     print(f"🖼️ Images: {len(images)} files")
     print(f"📎 Attachments: {len(attachments)} files")
-    print(f"📝 Authorization Letter: {'Yes' if authorization_letter else 'No'}")
+    print(f"📝 Authorization Letter: {'Yes' if authorization_letter and authorization_letter.filename else 'No'}")
+    print(f"📄 TCT: {'Yes' if tct and tct.filename else 'No'}")
+    print(f"🗺️ Sketch: {'Yes' if sketch and sketch.filename else 'No'}")
     
     # Generate new property ID
     new_id = max(MOCK_PROPERTIES.keys()) + 1 if MOCK_PROPERTIES else 1
@@ -500,6 +504,7 @@ async def create_property(
                 print(f"❌ Error uploading attachment {attachment.filename}: {e}")
                 # Continue processing other files even if one fails
     
+    # Process authorization letter (optional)
     saved_auth_letter = None
     if authorization_letter and authorization_letter.filename:
         try:
@@ -516,11 +521,45 @@ async def create_property(
             print(f"✅ Uploaded authorization letter to Cloudinary: {authorization_letter.filename}")
         except Exception as e:
             print(f"❌ Error uploading authorization letter: {e}")
-            # Authorization letter is required, so we should fail if this doesn't work
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to upload authorization letter: {str(e)}"
-            )
+            # Authorization letter is optional, so we continue even if upload fails
+    
+    # Process TCT (optional)
+    saved_tct = None
+    if tct and tct.filename:
+        try:
+            cloudinary_result = await upload_file_to_cloudinary(tct, "property_documents/tct")
+            saved_tct = {
+                "id": str(uuid.uuid4()),
+                "fileName": cloudinary_result["original_filename"],
+                "fileUrl": cloudinary_result["url"],
+                "fileSize": cloudinary_result["file_size"],
+                "fileType": cloudinary_result["mime_type"],
+                "cloudinaryId": cloudinary_result["cloudinary_id"],
+                "uploadedAt": datetime.now()
+            }
+            print(f"✅ Uploaded TCT to Cloudinary: {tct.filename}")
+        except Exception as e:
+            print(f"❌ Error uploading TCT: {e}")
+            # TCT is optional, so we continue even if upload fails
+    
+    # Process Sketch (optional)
+    saved_sketch = None
+    if sketch and sketch.filename:
+        try:
+            cloudinary_result = await upload_file_to_cloudinary(sketch, "property_documents/sketches")
+            saved_sketch = {
+                "id": str(uuid.uuid4()),
+                "fileName": cloudinary_result["original_filename"],
+                "fileUrl": cloudinary_result["url"],
+                "fileSize": cloudinary_result["file_size"],
+                "fileType": cloudinary_result["mime_type"],
+                "cloudinaryId": cloudinary_result["cloudinary_id"],
+                "uploadedAt": datetime.now()
+            }
+            print(f"✅ Uploaded sketch to Cloudinary: {sketch.filename}")
+        except Exception as e:
+            print(f"❌ Error uploading sketch: {e}")
+            # Sketch is optional, so we continue even if upload fails
     
     # Create new property with auto-populated fields
     new_property = {
@@ -536,7 +575,13 @@ async def create_property(
         "description": description,
         "status": "PROPERTY_SOURCING",  # Default status for new properties
         "transactionStatus": transactionStatus or "S",  # Default to Sale if not specified
-        "attachments": saved_images + saved_attachments + ([saved_auth_letter] if saved_auth_letter else []),
+        "attachments": (
+            saved_images + 
+            saved_attachments + 
+            ([saved_auth_letter] if saved_auth_letter else []) +
+            ([saved_tct] if saved_tct else []) +
+            ([saved_sketch] if saved_sketch else [])
+        ),
         "createdAt": datetime.now(),  # Mock timestamp
         "updatedAt": datetime.now(),  # Mock timestamp
         "submittedBy": {
