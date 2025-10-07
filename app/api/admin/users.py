@@ -107,6 +107,9 @@ async def update_user(
     current_user: User = Depends(current_admin_user),
 ):
     """Update a user (admin only)."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     stmt = select(User).where(User.id == user_id)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
@@ -114,17 +117,41 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    # Log the update attempt
+    logger.info(f"Admin user {current_user.id} ({current_user.email}) updating user {user_id}")
+    
     # Update user fields
     update_data = user_data.model_dump(exclude_unset=True)
+    logger.info(f"Update data for user {user_id}: {update_data.keys()}")
+    
+    # Track if anything actually changed
+    changes_made = False
+    
     for field, value in update_data.items():
         if field == "password" and value:
             from app.core.security import get_password_hash
             setattr(user, "hashed_password", get_password_hash(value))
+            logger.info(f"Updated password for user {user_id}")
+            changes_made = True
         elif field != "password":
-            setattr(user, field, value)
+            # Only update if the value is different
+            old_value = getattr(user, field, None)
+            if old_value != value:
+                setattr(user, field, value)
+                logger.info(f"Updated {field} for user {user_id}: {old_value} -> {value}")
+                changes_made = True
     
-    await db.commit()
-    await db.refresh(user)
+    if changes_made:
+        # Explicitly update the updated_at timestamp
+        from datetime import datetime
+        user.updated_at = datetime.utcnow()
+        
+        await db.commit()
+        await db.refresh(user)
+        logger.info(f"Successfully updated user {user_id}")
+    else:
+        logger.info(f"No changes made to user {user_id}")
+    
     return user
 
 
