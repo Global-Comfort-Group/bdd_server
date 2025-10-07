@@ -18,16 +18,19 @@ COPY . .
 # Create uploads directory
 RUN mkdir -p uploads
 
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
+# Copy and make startup script executable
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# Create non-root user and set permissions
+RUN useradd --create-home --shell /bin/bash app && \
+    chown -R app:app /app && \
+    chmod +x /app/start.sh
+
 USER app
 
-# Expose port
+# Expose port (Railway will set PORT env var)
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')"
-
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use startup script
+CMD ["/app/start.sh"]
