@@ -139,9 +139,32 @@ async def list_properties(
         else:
             property_dict["reviewer"] = None
             
-        # Add attachments and workflow history (empty for now)
-        property_dict["attachments"] = []
-        property_dict["workflowHistory"] = []
+        # Add attachments - transform to include Cloudinary URLs
+        attachments_list = []
+        if hasattr(prop, 'attachments') and prop.attachments:
+            for att in prop.attachments:
+                attachments_list.append({
+                    "id": att.id,
+                    "property_id": att.property_id,
+                    "original_filename": att.original_filename,
+                    "filename": att.filename,
+                    "file_name": att.filename,  # alias
+                    "fileName": att.original_filename,  # client format
+                    "mime_type": att.mime_type,
+                    "file_type": att.mime_type,  # alias
+                    "fileType": att.mime_type,  # client format
+                    "file_size": att.file_size,
+                    "fileSize": att.file_size,  # client format
+                    "cloudinary_url": att.cloudinary_url if hasattr(att, 'cloudinary_url') else None,
+                    "cloudinary_secure_url": att.cloudinary_secure_url if hasattr(att, 'cloudinary_secure_url') else None,
+                    "file_url": att.cloudinary_secure_url if hasattr(att, 'cloudinary_secure_url') else att.cloudinary_url if hasattr(att, 'cloudinary_url') else None,
+                    "fileUrl": att.cloudinary_secure_url if hasattr(att, 'cloudinary_secure_url') else att.cloudinary_url if hasattr(att, 'cloudinary_url') else None,  # client format
+                    "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
+                    "uploadedAt": att.uploaded_at.isoformat() if att.uploaded_at else None,  # client format
+                })
+        
+        property_dict["attachments"] = attachments_list
+        property_dict["workflowHistory"] = []  # Keep empty for list performance
         
         serialized_properties.append(property_dict)
     
@@ -305,18 +328,20 @@ async def update_property(
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Update a property."""
+    """Update a property. Only the submitter can edit property details."""
     service = PropertyService(db)
     property_obj = await service.get_property(property_id)
     
     if not property_obj:
         raise HTTPException(status_code=404, detail="Property not found")
     
-    # Check permissions - only owner, reviewer, BDD user, or admin can update
-    if (current_user.role.value not in ["BDD_USER", "ADMIN"] and
-        property_obj.submitted_by_id != current_user.id and
-        property_obj.reviewer_id != current_user.id):
-        raise HTTPException(status_code=403, detail="Not authorized to update this property")
+    # Check permissions - only the property submitter can edit property details
+    # For status updates, use the dedicated /status endpoint instead
+    if property_obj.submitted_by_id != current_user.id:
+        raise HTTPException(
+            status_code=403, 
+            detail="Only the property submitter can edit property details. Use /status endpoint to update property status."
+        )
     
     # Check if title number change conflicts with existing property
     if (property_data.title_number and 
@@ -364,7 +389,7 @@ async def update_property_status(
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Update property workflow status."""
+    """Update property workflow status. Only assigned reviewer (BDD_USER) or ADMIN can update status."""
     # Check if property exists and user has permission
     property_service = PropertyService(db)
     property_obj = await property_service.get_property(property_id)
@@ -372,10 +397,26 @@ async def update_property_status(
     if not property_obj:
         raise HTTPException(status_code=404, detail="Property not found")
     
-    # Status updates can be done by BDD users, admins, brokers, or property owner
-    if (current_user.role.value not in ["BDD_USER", "ADMIN", "BROKER"] and
-        property_obj.submitted_by_id != current_user.id):
-        raise HTTPException(status_code=403, detail="Not authorized to update property status")
+    # Status updates can be done by:
+    # 1. ADMIN (can update any property)
+    # 2. BDD_USER who is assigned as the reviewer
+    is_admin = current_user.role.value == "ADMIN"
+    is_assigned_reviewer = (
+        current_user.role.value == "BDD_USER" and 
+        property_obj.reviewer_id == current_user.id
+    )
+    
+    if not (is_admin or is_assigned_reviewer):
+        if current_user.role.value == "BDD_USER":
+            raise HTTPException(
+                status_code=403, 
+                detail="You can only update status for properties you are assigned to as a reviewer. Please contact an admin to assign you to this property."
+            )
+        else:
+            raise HTTPException(
+                status_code=403, 
+                detail="Only BDD employees assigned as reviewers or admins can update property status"
+            )
     
     # Use workflow service to handle status transition
     workflow_service = WorkflowService(db)

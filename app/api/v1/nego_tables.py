@@ -23,7 +23,14 @@ def create_nego_table(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new negotiation table for a property."""
+    """Create a new negotiation table for a property. Only BDD_USER and ADMIN can create."""
+    
+    # Check permissions - only BDD users and admins can create negotiation chronicles
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only BDD employees and admins can create negotiation chronicles"
+        )
     
     # Verify property exists
     property_obj = db.query(Property).filter(Property.id == nego_table_in.property_id).first()
@@ -129,7 +136,14 @@ def update_nego_table(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Update a negotiation table."""
+    """Update a negotiation table. Only BDD_USER and ADMIN can update."""
+    
+    # Check permissions - only BDD users and admins can update negotiation chronicles
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only BDD employees and admins can update negotiation chronicles"
+        )
     
     nego_table = db.query(NegoTable).filter(NegoTable.id == nego_table_id).first()
     if not nego_table:
@@ -156,7 +170,14 @@ def delete_nego_table(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a negotiation table."""
+    """Delete a negotiation table. Only BDD_USER and ADMIN can delete."""
+    
+    # Check permissions - only BDD users and admins can delete negotiation chronicles
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only BDD employees and admins can delete negotiation chronicles"
+        )
     
     nego_table = db.query(NegoTable).filter(NegoTable.id == nego_table_id).first()
     if not nego_table:
@@ -178,7 +199,14 @@ def add_negotiation_entry(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Add a new negotiation entry to a nego table."""
+    """Add a new negotiation entry to a nego table. Only BDD_USER and ADMIN can add."""
+    
+    # Check permissions - only BDD users and admins can add negotiation entries
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only BDD employees and admins can add negotiation entries"
+        )
     
     # Verify nego table exists
     nego_table = db.query(NegoTable).filter(NegoTable.id == nego_table_id).first()
@@ -210,7 +238,14 @@ def update_negotiation_entry(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Update a negotiation entry."""
+    """Update a negotiation entry. Only BDD_USER and ADMIN can update."""
+    
+    # Check permissions - only BDD users and admins can update negotiation entries
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only BDD employees and admins can update negotiation entries"
+        )
     
     negotiation = db.query(NegotiationEntry).filter(
         and_(
@@ -248,7 +283,14 @@ def delete_negotiation_entry(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a negotiation entry."""
+    """Delete a negotiation entry. Only BDD_USER and ADMIN can delete."""
+    
+    # Check permissions - only BDD users and admins can delete negotiation entries
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only BDD employees and admins can delete negotiation entries"
+        )
     
     negotiation = db.query(NegotiationEntry).filter(
         and_(

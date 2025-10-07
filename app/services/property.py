@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.property import Property, PropertyAttachment
 from app.models.user import User
-from app.models.workflow import PropertyStatus
+from app.models.workflow import PropertyStatus, WorkflowHistory
 from app.schemas.property import PropertyCreate, PropertyUpdate
 
 
@@ -21,7 +21,7 @@ class PropertyService:
                 selectinload(Property.submitted_by),
                 selectinload(Property.reviewer),
                 selectinload(Property.attachments),
-                selectinload(Property.workflow_history)
+                selectinload(Property.workflow_history).selectinload(WorkflowHistory.changed_by)
             )
             .where(Property.id == property_id)
         )
@@ -41,7 +41,11 @@ class PropertyService:
         """Get properties with optional filtering."""
         stmt = (
             select(Property)
-            .options(selectinload(Property.submitted_by))
+            .options(
+                selectinload(Property.submitted_by),
+                selectinload(Property.reviewer),
+                selectinload(Property.attachments)  # Load attachments!
+            )
             .offset(skip)
             .limit(limit)
         )
