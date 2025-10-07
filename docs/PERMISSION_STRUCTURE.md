@@ -69,12 +69,24 @@ if current_user.role.value not in ["BDD_USER", "ADMIN"]:
 **Endpoint**: `POST /api/v1/nego-tables/`
 
 ```python
-# Check permissions - only BDD users and admins can create negotiation chronicles
-if current_user.role.value not in ["BDD_USER", "ADMIN"]:
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Only BDD employees and admins can create negotiation chronicles"
-    )
+# Check permissions - only ADMIN or assigned reviewer (BDD_USER) can create nego tables
+is_admin = current_user.role.value == "ADMIN"
+is_assigned_reviewer = (
+    current_user.role.value == "BDD_USER" and 
+    property_obj.reviewer_id == current_user.id
+)
+
+if not (is_admin or is_assigned_reviewer):
+    if current_user.role.value == "BDD_USER":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only create negotiation chronicles for properties you are assigned to as a reviewer. Please contact an admin to assign you to this property."
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only BDD employees assigned as reviewers or admins can create negotiation chronicles"
+        )
 ```
 
 #### Update Chronicle
@@ -141,21 +153,23 @@ if current_user.role.value not in ["BDD_USER", "ADMIN"]:
 
 ## Permission Matrix
 
-| Action | AGENT | BROKER | BDD_USER | ADMIN |
-|--------|-------|--------|----------|-------|
-| View Properties | ✅ | ✅ | ✅ | ✅ |
-| Create Property | ✅ | ✅ | ✅ | ✅ |
-| Edit Own Property | ✅ | ✅ | ✅ | ✅ |
-| Edit Other's Property | ❌ | ❌ | ❌ | ❌ |
-| Update Property Status | ❌ | ❌ | ✅ | ✅ |
-| Delete Own Property | ✅ | ✅ | ✅ | ✅ |
-| View Nego Chronicles | ✅ | ✅ | ✅ | ✅ |
-| Create Nego Chronicle | ❌ | ❌ | ✅ | ✅ |
-| Edit Nego Chronicle | ❌ | ❌ | ✅ | ✅ |
-| Delete Nego Chronicle | ❌ | ❌ | ✅ | ✅ |
-| Add Nego Entry | ❌ | ❌ | ✅ | ✅ |
-| Edit Nego Entry | ❌ | ❌ | ✅ | ✅ |
-| Delete Nego Entry | ❌ | ❌ | ✅ | ✅ |
+| Action | AGENT | BROKER | BDD_USER | BDD_USER (Assigned) | ADMIN |
+|--------|-------|--------|----------|---------------------|-------|
+| View Properties | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Create Property | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Edit Own Property | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Edit Other's Property | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Update Property Status | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Delete Own Property | ✅ | ✅ | ✅ | ✅ | ✅ |
+| View Nego Chronicles | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Create Nego Chronicle | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Edit Nego Chronicle | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Delete Nego Chronicle | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Add Nego Entry | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Edit Nego Entry | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Delete Nego Entry | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+**Note**: "BDD_USER (Assigned)" means a BDD_USER who is assigned as the reviewer for that specific property.
 
 ## Files Modified
 
@@ -163,13 +177,12 @@ if current_user.role.value not in ["BDD_USER", "ADMIN"]:
 - Updated property edit permission check (line 338-344)
 - Updated status update permission check (line 400-405)
 
-### 2. `/app/api/v1/nego_tables.py`
-- Added permission check to create endpoint (line 28-33)
-- Added permission check to update endpoint (line 141-146)
-- Added permission check to delete endpoint (line 175-180)
-- Added permission check to add negotiation entry (line 204-209)
-- Added permission check to update negotiation entry (line 243-248)
-- Added permission check to delete negotiation entry (line 288-293)
+### 2. `/app/api/v1/nego_tables_simple.py`
+- Added authentication requirement with `current_user` dependency
+- Added permission check to create endpoint (line 80-99)
+  - Only ADMIN can create nego tables for any property
+  - Only BDD_USER assigned as reviewer can create nego tables for their assigned properties
+- Updated created_by to use current_user information (line 175-179)
 
 ## Error Responses
 

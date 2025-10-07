@@ -36,12 +36,17 @@ async def get_nego_tables(
 @router.post("/")
 async def create_nego_table(
     nego_table_data: dict,
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
 ):
-    """Create a new negotiation table for a property with auto-populated data."""
+    """Create a new negotiation table for a property with auto-populated data.
+    
+    Only ADMIN or BDD_USER assigned as reviewer can create nego tables.
+    """
     
     print(f"📥 RECEIVED NEGO TABLE CREATE REQUEST")
     print(f"📥 Request data: {nego_table_data}")
+    print(f"👤 Current user: {current_user.email} (Role: {current_user.role.value})")
     
     from app.services.property import PropertyService
     from sqlalchemy import select
@@ -72,7 +77,28 @@ async def create_nego_table(
         property_obj = result.scalar_one_or_none()
         
         if property_obj:
+            # Check permissions - only ADMIN or assigned reviewer (BDD_USER) can create nego tables
+            is_admin = current_user.role.value == "ADMIN"
+            is_assigned_reviewer = (
+                current_user.role.value == "BDD_USER" and 
+                property_obj.reviewer_id == current_user.id
+            )
+            
+            if not (is_admin or is_assigned_reviewer):
+                if current_user.role.value == "BDD_USER":
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="You can only create negotiation chronicles for properties you are assigned to as a reviewer. Please contact an admin to assign you to this property."
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Only BDD employees assigned as reviewers or admins can create negotiation chronicles"
+                    )
+            
+            print(f"✅ Permission check passed - User {current_user.email} can create nego table")
             print(f"✅ Found property in database: {property_obj.name}")
+            
             # Convert database property to dictionary format
             property_data = {
                 "id": property_obj.id,
@@ -147,9 +173,9 @@ async def create_nego_table(
         "created_at": datetime.now().isoformat(),
         "updated_at": datetime.now().isoformat(),
         "created_by": {
-            "id": property_data["submittedBy"]["id"],
-            "firstName": property_data["submittedBy"]["firstName"],
-            "lastName": property_data["submittedBy"]["lastName"]
+            "id": current_user.id,
+            "firstName": current_user.first_name,
+            "lastName": current_user.last_name
         },
         "property": {
             "id": property_data["id"],
@@ -170,6 +196,8 @@ async def create_nego_table(
     
     # Store the nego table
     CREATED_NEGO_TABLES[new_id] = new_nego_table
+    
+    print(f"✅ Successfully created negotiation chronicle ID: {new_id}")
     
     return new_nego_table
 
