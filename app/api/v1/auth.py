@@ -195,6 +195,44 @@ async def login_for_access_token(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your account has been rejected by an administrator.",
             )
+        
+        # Create access token
+        print(f"✅ Creating access token for: {form_data.username}")
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user.email, "user_id": user.id, "role": user.role}, 
+            expires_delta=access_token_expires
+        )
+        
+        # Log successful login (don't fail login if logging fails)
+        try:
+            await log_login(
+                db=db,
+                user_id=user.id,
+                user_email=user.email,
+                request=request
+            )
+            print(f"✅ Login successful for: {form_data.username}")
+        except Exception as e:
+            # Log the error but don't fail the login
+            print(f"⚠️ Activity logging failed: {e}")
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "middle_name": user.middle_name,
+                "last_name": user.last_name,
+                "role": user.role,
+                "company": user.company,
+                "phone": user.phone,
+                "is_active": user.is_active
+            }
+        }
+        
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
@@ -207,40 +245,6 @@ async def login_for_access_token(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {str(e)}"
         )
-    
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email, "user_id": user.id, "role": user.role}, 
-        expires_delta=access_token_expires
-    )
-    
-    # Log successful login (don't fail login if logging fails)
-    try:
-        await log_login(
-            db=db,
-            user_id=user.id,
-            user_email=user.email,
-            request=request
-        )
-    except Exception as e:
-        # Log the error but don't fail the login
-        print(f"⚠️ Activity logging failed: {e}")
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "first_name": user.first_name,
-            "middle_name": user.middle_name,
-            "last_name": user.last_name,
-            "role": user.role,
-            "company": user.company,
-            "phone": user.phone,
-            "is_active": user.is_active
-        }
-    }
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
