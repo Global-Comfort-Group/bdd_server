@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
 from jose import jwt
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, field_validator
@@ -83,17 +83,34 @@ async def get_user_by_email(db: AsyncSession, email: str):
 
 async def authenticate_user(db: AsyncSession, email: str, password: str):
     """Authenticate user with email and password."""
-    user = await get_user_by_email(db, email)
-    if not user:
+    try:
+        print(f"🔍 Looking up user: {email}")
+        user = await get_user_by_email(db, email)
+        
+        if not user:
+            print(f"❌ User not found: {email}")
+            return False
+        
+        print(f"✅ User found: {email}, checking password...")
+        if not verify_password(password, user.hashed_password):
+            print(f"❌ Password verification failed for: {email}")
+            return False
+        
+        print(f"✅ Password verified, checking account status: {user.account_status}")
+        
+        # Check if account is approved
+        if user.account_status != AccountStatus.APPROVED:
+            status_msg = "pending_approval" if user.account_status == AccountStatus.PENDING else "rejected"
+            print(f"⚠️ Account not approved: {email} - Status: {status_msg}")
+            return status_msg
+        
+        print(f"✅ Authentication successful for: {email}")
+        return user
+    except Exception as e:
+        print(f"💥 Error in authenticate_user: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         return False
-    if not verify_password(password, user.hashed_password):
-        return False
-    
-    # Check if account is approved
-    if user.account_status != AccountStatus.APPROVED:
-        return "pending_approval" if user.account_status == AccountStatus.PENDING else "rejected"
-    
-    return user
 
 @router.post("/register")
 async def register_user(
@@ -152,61 +169,83 @@ async def login_for_access_token(
     db: AsyncSession = Depends(get_async_session)
 ):
     """Login endpoint that returns a JWT token."""
-    user = await authenticate_user(db, form_data.username, form_data.password)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # Handle account approval status
-    if user == "pending_approval":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is pending admin approval. Please wait for approval before logging in.",
-        )
-    elif user == "rejected":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account has been rejected by an administrator.",
-        )
-    
-    # Create access token
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email, "user_id": user.id, "role": user.role}, 
-        expires_delta=access_token_expires
-    )
-    
-    # Log successful login (don't fail login if logging fails)
     try:
-        await log_login(
-            db=db,
-            user_id=user.id,
-            user_email=user.email,
-            request=request
+        print(f"🔐 Login attempt for: {form_data.username}")
+        user = await authenticate_user(db, form_data.username, form_data.password)
+        print(f"🔐 Authentication result: {user}")
+        
+        if not user:
+            print(f"❌ Authentication failed for: {form_data.username}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Handle account approval status
+        if user == "pending_approval":
+            print(f"⏳ Account pending approval: {form_data.username}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account is pending admin approval. Please wait for approval before logging in.",
+            )
+        elif user == "rejected":
+            print(f"🚫 Account rejected: {form_data.username}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account has been rejected by an administrator.",
+            )
+        
+        # Create access token
+        print(f"✅ Creating access token for: {form_data.username}")
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user.email, "user_id": user.id, "role": user.role}, 
+            expires_delta=access_token_expires
         )
-    except Exception as e:
-        # Log the error but don't fail the login
-        print(f"Activity logging failed: {e}")
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "first_name": user.first_name,
-            "middle_name": user.middle_name,
-            "last_name": user.last_name,
-            "role": user.role,
-            "company": user.company,
-            "phone": user.phone,
-            "is_active": user.is_active
+        
+        # Log successful login (don't fail login if logging fails)
+        try:
+            await log_login(
+                db=db,
+                user_id=user.id,
+                user_email=user.email,
+                request=request
+            )
+            print(f"✅ Login successful for: {form_data.username}")
+        except Exception as e:
+            # Log the error but don't fail the login
+            print(f"⚠️ Activity logging failed: {e}")
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "middle_name": user.middle_name,
+                "last_name": user.last_name,
+                "role": user.role,
+                "company": user.company,
+                "phone": user.phone,
+                "avatar_url": user.avatar_url,
+                "is_active": user.is_active
+            }
         }
-    }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Catch any unexpected errors and log them
+        print(f"💥 Login error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login failed: {str(e)}"
+        )
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
@@ -282,5 +321,179 @@ async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]
         "role": current_user.role,
         "company": current_user.company,
         "phone": current_user.phone,
+        "avatar_url": current_user.avatar_url,
         "is_active": current_user.is_active
     }
+
+
+class ProfileUpdate(BaseModel):
+    """Schema for user profile updates (non-admin)"""
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    
+    @field_validator('phone')
+    @classmethod
+    def validate_philippines_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        import re
+        mobile_pattern = r'^(\+63|63|0)?[89]\d{9}$'
+        landline_pattern = r'^(\+63|63|0)?[2-8]\d{7,8}$'
+        
+        if not (re.match(mobile_pattern, v) or re.match(landline_pattern, v)):
+            raise ValueError('Please enter a valid Philippines phone number')
+        return v
+
+
+@router.patch("/me")
+async def update_profile(
+    profile_data: ProfileUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Update current user's profile information."""
+    try:
+        # Check if email is being changed and if it's already taken
+        if profile_data.email and profile_data.email != current_user.email:
+            existing_user = await get_user_by_email(db, profile_data.email)
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already in use"
+                )
+        
+        # Update user fields
+        update_data = profile_data.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            if value is not None:
+                setattr(current_user, field, value)
+        
+        current_user.updated_at = datetime.utcnow()
+        await db.commit()
+        await db.refresh(current_user)
+        
+        return {
+            "message": "Profile updated successfully",
+            "user": {
+                "id": current_user.id,
+                "email": current_user.email,
+                "first_name": current_user.first_name,
+                "middle_name": current_user.middle_name,
+                "last_name": current_user.last_name,
+                "role": current_user.role,
+                "company": current_user.company,
+                "phone": current_user.phone,
+                "avatar_url": current_user.avatar_url,
+                "is_active": current_user.is_active
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        print(f"💥 Profile update error: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update profile: {str(e)}"
+        )
+
+
+class PasswordChange(BaseModel):
+    """Schema for password change"""
+    current_password: str
+    new_password: str
+
+
+@router.patch("/password")
+async def change_password(
+    password_data: PasswordChange,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Change current user's password."""
+    try:
+        # Verify current password
+        if not verify_password(password_data.current_password, current_user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect"
+            )
+        
+        # Validate new password length
+        if len(password_data.new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must be at least 8 characters long"
+            )
+        
+        # Update password
+        current_user.hashed_password = hash_password(password_data.new_password)
+        current_user.updated_at = datetime.utcnow()
+        await db.commit()
+        
+        return {"message": "Password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        print(f"💥 Password change error: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to change password: {str(e)}"
+        )
+
+
+@router.post("/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Upload or update user avatar image."""
+    from app.services.file_storage import FileStorageService
+    
+    try:
+        # Validate file type
+        if not file.content_type or not file.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must be an image"
+            )
+        
+        # Validate file size (5MB limit)
+        if file.size and file.size > 5 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Avatar file size must be less than 5MB"
+            )
+        
+        # Upload to Cloudinary
+        file_storage = FileStorageService()
+        upload_result = await file_storage.save_file(
+            file=file,
+            subfolder=f"avatars/user_{current_user.id}"
+        )
+        
+        # Update user's avatar URL
+        current_user.avatar_url = upload_result["secure_url"]
+        current_user.updated_at = datetime.utcnow()
+        await db.commit()
+        await db.refresh(current_user)
+        
+        return {
+            "message": "Avatar uploaded successfully",
+            "avatar_url": current_user.avatar_url
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        print(f"💥 Avatar upload error: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload avatar: {str(e)}"
+        )

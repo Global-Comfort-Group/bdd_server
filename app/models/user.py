@@ -26,6 +26,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), nullable=False, default=UserRole.AGENT)
     company: Mapped[str] = mapped_column(String(100), nullable=True)
     phone: Mapped[str] = mapped_column(String(20), nullable=True)
+    avatar_url: Mapped[str] = mapped_column(String(500), nullable=True)  # Cloudinary URL for avatar
     account_status: Mapped[AccountStatus] = mapped_column(SQLEnum(AccountStatus), nullable=False, default=AccountStatus.PENDING)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

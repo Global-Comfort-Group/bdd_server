@@ -585,11 +585,13 @@ async def create_property(
         "createdAt": datetime.now(),  # Mock timestamp
         "updatedAt": datetime.now(),  # Mock timestamp
         "submittedBy": {
-            "id": 999,  # Mock user ID for development
-            "firstName": "System",
-            "lastName": "User",
-            "email": "system@bdd.com",
-            "role": "AGENT"
+            "id": current_user.id,  # Use actual authenticated user ID
+            "firstName": current_user.first_name,
+            "lastName": current_user.last_name,
+            "email": current_user.email,
+            "role": current_user.role.value,
+            "createdAt": current_user.created_at,
+            "updatedAt": current_user.updated_at
         }
     }
     

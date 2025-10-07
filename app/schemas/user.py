@@ -16,6 +16,7 @@ class UserPublic(BaseModel):
     role: UserRole
     company: Optional[str] = None
     phone: Optional[str] = None
+    avatar_url: Optional[str] = None
     is_active: bool = True
     account_status: AccountStatus
     created_at: datetime
@@ -41,6 +42,7 @@ class UserRead(BaseModel):
     role: UserRole
     company: Optional[str] = None
     phone: Optional[str] = None
+    avatar_url: Optional[str] = None
     is_active: bool = True
     is_superuser: bool = False
     is_verified: bool = False
@@ -84,6 +86,7 @@ class UserUpdate(BaseModel):
     role: Optional[UserRole] = None
     company: Optional[str] = None
     phone: Optional[str] = None
+    avatar_url: Optional[str] = None
     is_active: Optional[bool] = None
     is_superuser: Optional[bool] = None
     is_verified: Optional[bool] = None
