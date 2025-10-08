@@ -430,6 +430,27 @@ async def update_property_status(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.patch("/{property_id}/mark", response_model=PropertyRead)
+async def toggle_property_mark(
+    property_id: int,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Toggle mark/bookmark status on a property for quick access. Any authenticated user can mark properties."""
+    property_service = PropertyService(db)
+    property_obj = await property_service.get_property(property_id)
+    
+    if not property_obj:
+        raise HTTPException(status_code=404, detail="Property not found")
+    
+    # Toggle the mark status
+    property_obj.is_marked = not property_obj.is_marked
+    await db.commit()
+    await db.refresh(property_obj)
+    
+    return property_obj
+
+
 @router.get("/{property_id}/history")
 async def get_property_history(
     property_id: int,

@@ -112,6 +112,7 @@ class PropertyRead(PropertyBase):
     reviewer_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    is_marked: bool = False
 
     # Related objects - using UserPublic to exclude sensitive data
     submitted_by: Optional[UserPublic] = None

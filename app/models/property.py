@@ -72,6 +72,9 @@ class Property(Base):
     is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     duplicate_of_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("properties.id"), nullable=True)
     duplicate_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Mark/Bookmark for review
+    is_marked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # Bookmark flag for quick access/review
 
     # Relationships
     submitted_by: Mapped["User"] = relationship(
