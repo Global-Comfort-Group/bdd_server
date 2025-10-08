@@ -30,7 +30,8 @@ class PropertyBase(BaseModel):
     
     lot_area: float
     property_type: PropertyType
-    price: Decimal
+    price: Decimal  # Sale price or primary price
+    lease_price: Optional[Decimal] = None  # Required when transaction_status is SL
     currency: str = "PHP"
     zoning_classification: ZoningClassification
     title_number: str
@@ -49,6 +50,14 @@ class PropertyCreate(PropertyBase):
     def lot_area_must_be_positive(cls, v):
         if v <= 0:
             raise ValueError('Lot area must be positive')
+        return v
+    
+    @validator('lease_price')
+    def validate_lease_price(cls, v, values):
+        transaction_status = values.get('transaction_status')
+        if transaction_status == TransactionStatus.SL:
+            if v is None or v <= 0:
+                raise ValueError('Lease price is required and must be positive for Sale & Lease transactions')
         return v
 
 
@@ -73,6 +82,7 @@ class PropertyUpdate(BaseModel):
     lot_area: Optional[float] = None
     property_type: Optional[PropertyType] = None
     price: Optional[Decimal] = None
+    lease_price: Optional[Decimal] = None
     currency: Optional[str] = None
     zoning_classification: Optional[ZoningClassification] = None
     title_number: Optional[str] = None

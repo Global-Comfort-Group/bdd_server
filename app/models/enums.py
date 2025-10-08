@@ -54,7 +54,7 @@ class AccountStatus(str, Enum):
 class TransactionStatus(str, Enum):
     S = "S"  # Sale
     L = "L"  # Lease
-    SL = "SL"  # Sale Leaseback  
+    SL = "SL"  # Sale & Lease
     JV = "JV"  # Joint Venture
 
 
