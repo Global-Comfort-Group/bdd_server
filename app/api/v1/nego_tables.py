@@ -71,12 +71,21 @@ def get_nego_tables(
 ):
     """Get negotiation tables, optionally filtered by property."""
     
+    print(f"🔍 GET /nego-tables/ called with property_id={property_id}, type={type(property_id)}")
+    
     query = db.query(NegoTable)
     
     if property_id:
+        print(f"✅ Filtering by property_id={property_id}")
         query = query.filter(NegoTable.property_id == property_id)
+    else:
+        print(f"⚠️  No property_id filter - returning ALL nego tables")
     
     nego_tables = query.offset(skip).limit(limit).all()
+    
+    print(f"📊 Found {len(nego_tables)} nego tables")
+    for nt in nego_tables:
+        print(f"   - Nego Table ID: {nt.id}, Property ID: {nt.property_id}, Property Name: {nt.property.name}")
     
     # Add property information to each nego table
     result = []
