@@ -41,6 +41,17 @@ class PropertyBase(BaseModel):
 
 
 class PropertyCreate(PropertyBase):
+    @validator('zoning_classification', pre=True)
+    def validate_zoning_classification(cls, v):
+        """Convert string to ZoningClassification enum by matching the value"""
+        if isinstance(v, str):
+            # Try to find the enum member with this value
+            for member in ZoningClassification:
+                if member.value == v:
+                    return member
+            # If not found, let Pydantic try default conversion
+        return v
+    
     @validator('price')
     def price_must_be_positive(cls, v):
         if v <= 0:
@@ -91,6 +102,17 @@ class PropertyUpdate(BaseModel):
     referred_by: Optional[str] = None
     transaction_status: Optional[TransactionStatus] = None
     reviewer_id: Optional[int] = None
+
+    @validator('zoning_classification', pre=True)
+    def validate_zoning_classification(cls, v):
+        """Convert string to ZoningClassification enum by matching the value"""
+        if isinstance(v, str):
+            # Try to find the enum member with this value
+            for member in ZoningClassification:
+                if member.value == v:
+                    return member
+            # If not found, let Pydantic try default conversion
+        return v
 
     @validator('price')
     def price_must_be_positive(cls, v):
