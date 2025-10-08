@@ -4,13 +4,14 @@ File upload endpoints using Cloudinary
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.database import get_async_session
-from app.models.property import PropertyAttachment
+from app.models.property import PropertyAttachment, Property
 from app.schemas.property import PropertyAttachmentRead
 from app.services.file_storage import file_storage_service
 from app.api.v1.auth import get_current_user
-from app.models.user import User
+from app.models.user import User, UserRole
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -24,6 +25,7 @@ async def upload_property_attachment(
 ):
     """
     Upload a file attachment for a property using Cloudinary.
+    Only the property submitter, BDD users, and admins can upload attachments.
     
     Args:
         property_id: ID of the property to attach file to
@@ -35,6 +37,24 @@ async def upload_property_attachment(
         PropertyAttachmentRead with Cloudinary URLs
     """
     try:
+        # Verify property exists and check permissions
+        stmt = select(Property).where(Property.id == property_id)
+        result = await db.execute(stmt)
+        property_obj = result.scalar_one_or_none()
+        
+        if not property_obj:
+            raise HTTPException(status_code=404, detail="Property not found")
+        
+        # Permission check: Only submitter, BDD users, and admins can upload
+        if (current_user.role not in [UserRole.BDD_USER, UserRole.ADMIN] and
+            property_obj.submitted_by_id != current_user.id):
+            raise HTTPException(
+                status_code=403, 
+                detail="You don't have permission to upload attachments to this property"
+            )
+        
+        print(f"🔒 Permission granted: {current_user.email} uploading to property {property_id}")
+        
         # Upload file to Cloudinary
         upload_result = await file_storage_service.save_file(
             file=file, 
@@ -85,6 +105,7 @@ async def delete_property_attachment(
 ):
     """
     Delete a property attachment from both database and Cloudinary.
+    Only the property submitter, BDD users, and admins can delete attachments.
     
     Args:
         attachment_id: ID of the attachment to delete
@@ -94,10 +115,35 @@ async def delete_property_attachment(
     Returns:
         Success message
     """
-    # Get attachment from database
-    attachment = await db.get(PropertyAttachment, attachment_id)
+    # Get attachment from database with property relationship
+    stmt = (
+        select(PropertyAttachment)
+        .join(Property, PropertyAttachment.property_id == Property.id)
+        .where(PropertyAttachment.id == attachment_id)
+    )
+    result = await db.execute(stmt)
+    attachment = result.scalar_one_or_none()
+    
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
+    
+    # Get the property to check permissions
+    property_stmt = select(Property).where(Property.id == attachment.property_id)
+    property_result = await db.execute(property_stmt)
+    property_obj = property_result.scalar_one_or_none()
+    
+    if not property_obj:
+        raise HTTPException(status_code=404, detail="Property not found")
+    
+    # Permission check: Only submitter, BDD users, and admins can delete
+    if (current_user.role not in [UserRole.BDD_USER, UserRole.ADMIN] and
+        property_obj.submitted_by_id != current_user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to delete this attachment"
+        )
+    
+    print(f"🔒 Permission granted: {current_user.email} deleting attachment {attachment_id}")
     
     try:
         # Delete from Cloudinary
