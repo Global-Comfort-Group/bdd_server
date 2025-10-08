@@ -56,3 +56,11 @@ class TransactionStatus(str, Enum):
     L = "L"  # Lease
     SL = "SL"  # Sale Leaseback  
     JV = "JV"  # Joint Venture
+
+
+class ZoningClassification(str, Enum):
+    RESIDENTIAL = "Residential"
+    COMMERCIAL = "Commercial"
+    AGRICULTURAL = "Agricultural"
+    AGRICULTURAL_BEACH_FRONT = "Agricultural - Beach Front"
+    INDUSTRIAL = "Industrial"

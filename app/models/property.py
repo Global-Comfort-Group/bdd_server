@@ -17,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.models.enums import PropertyStatus, PropertyType, TransactionStatus
+from app.models.enums import PropertyStatus, PropertyType, TransactionStatus, ZoningClassification
 
 
 class Property(Base):
@@ -44,7 +44,7 @@ class Property(Base):
     property_type: Mapped[PropertyType] = mapped_column(SQLEnum(PropertyType), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="PHP", nullable=False)
-    zoning_classification: Mapped[str] = mapped_column(String(100), nullable=False)
+    zoning_classification: Mapped[ZoningClassification] = mapped_column(SQLEnum(ZoningClassification), nullable=False)
     title_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

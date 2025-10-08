@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, validator
 
-from app.models.enums import PropertyType, PropertyStatus, TransactionStatus
+from app.models.enums import PropertyType, PropertyStatus, TransactionStatus, ZoningClassification
 from app.schemas.user import UserPublic
 from app.schemas.workflow import WorkflowHistoryRead
 
@@ -32,7 +32,7 @@ class PropertyBase(BaseModel):
     property_type: PropertyType
     price: Decimal
     currency: str = "PHP"
-    zoning_classification: str
+    zoning_classification: ZoningClassification
     title_number: str
     description: Optional[str] = None
     transaction_status: TransactionStatus
@@ -74,7 +74,7 @@ class PropertyUpdate(BaseModel):
     property_type: Optional[PropertyType] = None
     price: Optional[Decimal] = None
     currency: Optional[str] = None
-    zoning_classification: Optional[str] = None
+    zoning_classification: Optional[ZoningClassification] = None
     title_number: Optional[str] = None
     description: Optional[str] = None
     transaction_status: Optional[TransactionStatus] = None
