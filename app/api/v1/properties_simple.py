@@ -94,7 +94,7 @@ MOCK_PROPERTIES = {
         "zoningClassification": "Industrial",
         "titleNumber": "TCT-345678",
         "description": "Large warehouse facility in Alabang",
-        "status": "CONTRACT_SIGNING",
+        "status": "COL_DOAS_SIGNING",
         "transactionStatus": "S",  # Sale
         "submittedBy": {
             "id": 4,
@@ -115,7 +115,7 @@ MOCK_PROPERTIES = {
         "zoningClassification": "Mixed Use",
         "titleNumber": "TCT-901234",
         "description": "Mixed-use development opportunity in QC",
-        "status": "COUNCIL_APPROVAL",
+        "status": "EXECOM",
         "transactionStatus": "S",  # Sale
         "submittedBy": {
             "id": 5,
@@ -157,7 +157,7 @@ MOCK_PROPERTIES = {
         "zoningClassification": "Residential",
         "titleNumber": "TCT-345789",
         "description": "Large residential subdivision lot in Davao",
-        "status": "PBY_PREPARATION",
+        "status": "PBY_STUDY",
         "transactionStatus": "S",  # Sale
         "submittedBy": {
             "id": 7,
@@ -178,7 +178,7 @@ MOCK_PROPERTIES = {
         "zoningClassification": "Tourism",
         "titleNumber": "TCT-678901",
         "description": "Mountain resort property in Baguio",
-        "status": "TAKEOVER",
+        "status": "COL_DOAS_SIGNING",
         "transactionStatus": "S",  # Sale
         "submittedBy": {
             "id": 8,
@@ -249,14 +249,16 @@ async def get_property_statistics(
     
     pending_review = (
         status_counts.get("PROPERTY_SOURCING", 0) + 
-        status_counts.get("PROPERTY_STUDY", 0)
+        status_counts.get("PROPERTY_SCREENING_FUNG_SHUI", 0)
     )
     
     approved = (
+        status_counts.get("PBY_STUDY", 0) +
+        status_counts.get("EXECOM", 0) +
+        status_counts.get("BOARD_APPROVAL", 0) +
+        status_counts.get("DUE_DILIGENCE", 0) +
         status_counts.get("NEGOTIATION", 0) + 
-        status_counts.get("DUE_DILIGENCE", 0) + 
-        status_counts.get("CONTRACT_SIGNING", 0) +
-        status_counts.get("TAKEOVER", 0)
+        status_counts.get("COL_DOAS_SIGNING", 0)
     )
     
     under_negotiation = status_counts.get("NEGOTIATION", 0)

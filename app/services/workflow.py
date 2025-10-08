@@ -12,33 +12,33 @@ class WorkflowService:
     """Service for managing property workflow state transitions."""
     
     VALID_TRANSITIONS: Dict[PropertyStatus, List[PropertyStatus]] = {
-        PropertyStatus.PROPERTY_SOURCING: [PropertyStatus.PROPERTY_STUDY],
-        PropertyStatus.PROPERTY_STUDY: [
-            PropertyStatus.PBY_PREPARATION,
+        PropertyStatus.PROPERTY_SOURCING: [PropertyStatus.PROPERTY_SCREENING_FUNG_SHUI],
+        PropertyStatus.PROPERTY_SCREENING_FUNG_SHUI: [
+            PropertyStatus.PBY_STUDY,
             PropertyStatus.PROPERTY_SOURCING  # Allow going back
         ],
-        PropertyStatus.PBY_PREPARATION: [
-            PropertyStatus.COUNCIL_APPROVAL,
-            PropertyStatus.PROPERTY_STUDY  # Allow going back
+        PropertyStatus.PBY_STUDY: [
+            PropertyStatus.EXECOM,
+            PropertyStatus.PROPERTY_SCREENING_FUNG_SHUI  # Allow going back
         ],
-        PropertyStatus.COUNCIL_APPROVAL: [
-            PropertyStatus.NEGOTIATION,
-            PropertyStatus.PBY_PREPARATION  # Allow going back
+        PropertyStatus.EXECOM: [
+            PropertyStatus.BOARD_APPROVAL,
+            PropertyStatus.PBY_STUDY  # Allow going back
         ],
-        PropertyStatus.NEGOTIATION: [
+        PropertyStatus.BOARD_APPROVAL: [
             PropertyStatus.DUE_DILIGENCE,
-            PropertyStatus.COUNCIL_APPROVAL  # Allow going back
+            PropertyStatus.EXECOM  # Allow going back
         ],
         PropertyStatus.DUE_DILIGENCE: [
-            PropertyStatus.CONTRACT_SIGNING,
-            PropertyStatus.NEGOTIATION  # Allow going back
+            PropertyStatus.NEGOTIATION,
+            PropertyStatus.BOARD_APPROVAL  # Allow going back
         ],
-        PropertyStatus.CONTRACT_SIGNING: [
-            PropertyStatus.TAKEOVER,
+        PropertyStatus.NEGOTIATION: [
+            PropertyStatus.COL_DOAS_SIGNING,
             PropertyStatus.DUE_DILIGENCE  # Allow going back
         ],
-        PropertyStatus.TAKEOVER: [
-            PropertyStatus.CONTRACT_SIGNING  # Allow going back for corrections
+        PropertyStatus.COL_DOAS_SIGNING: [
+            PropertyStatus.NEGOTIATION  # Allow going back for corrections
         ],
     }
 

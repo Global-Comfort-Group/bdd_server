@@ -556,14 +556,16 @@ async def get_user_dashboard_statistics(
     # Status counts
     from app.models.workflow import PropertyStatus
     pending_review_query = select(func.count(Property.id)).where(
-        Property.status.in_([PropertyStatus.PROPERTY_SOURCING, PropertyStatus.PROPERTY_STUDY])
+        Property.status.in_([PropertyStatus.PROPERTY_SOURCING, PropertyStatus.PROPERTY_SCREENING_FUNG_SHUI])
     )
     approved_query = select(func.count(Property.id)).where(
         Property.status.in_([
-            PropertyStatus.NEGOTIATION,
+            PropertyStatus.PBY_STUDY,
+            PropertyStatus.EXECOM,
+            PropertyStatus.BOARD_APPROVAL,
             PropertyStatus.DUE_DILIGENCE,
-            PropertyStatus.CONTRACT_SIGNING,
-            PropertyStatus.TAKEOVER
+            PropertyStatus.NEGOTIATION,
+            PropertyStatus.COL_DOAS_SIGNING
         ])
     )
     under_negotiation_query = select(func.count(Property.id)).where(
