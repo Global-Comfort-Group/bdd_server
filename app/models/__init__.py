@@ -7,6 +7,7 @@ from app.models.negotiation_chronicle import NegotiationChronicleAttachment
 from app.models.notification import Notification, NotificationType
 from app.models.activity_log import ActivityLog, ActivityAction, ResourceType
 from app.models.enums import UserRole, PropertyType, PropertyStatus, TransactionMode
+from app.models.types import ZoningClassification, ZONING_CLASSIFICATIONS
 
 __all__ = [
     "User", 
@@ -26,5 +27,7 @@ __all__ = [
     "TransactionMode",
     "ActivityLog",
     "ActivityAction",
-    "ResourceType"
+    "ResourceType",
+    "ZoningClassification",
+    "ZONING_CLASSIFICATIONS"
 ]
