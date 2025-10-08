@@ -389,7 +389,7 @@ async def update_property_status(
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Update property workflow status. Only assigned reviewer (BDD_USER) or ADMIN can update status."""
+    """Update property workflow status. Any BDD_USER or ADMIN can update status."""
     # Check if property exists and user has permission
     property_service = PropertyService(db)
     property_obj = await property_service.get_property(property_id)
@@ -399,24 +399,12 @@ async def update_property_status(
     
     # Status updates can be done by:
     # 1. ADMIN (can update any property)
-    # 2. BDD_USER who is assigned as the reviewer
-    is_admin = current_user.role.value == "ADMIN"
-    is_assigned_reviewer = (
-        current_user.role.value == "BDD_USER" and 
-        property_obj.reviewer_id == current_user.id
-    )
-    
-    if not (is_admin or is_assigned_reviewer):
-        if current_user.role.value == "BDD_USER":
-            raise HTTPException(
-                status_code=403, 
-                detail="You can only update status for properties you are assigned to as a reviewer. Please contact an admin to assign you to this property."
-            )
-        else:
-            raise HTTPException(
-                status_code=403, 
-                detail="Only BDD employees assigned as reviewers or admins can update property status"
-            )
+    # 2. Any BDD_USER
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
+        raise HTTPException(
+            status_code=403, 
+            detail="Only BDD employees and admins can update property workflow status"
+        )
     
     # Use workflow service to handle status transition
     workflow_service = WorkflowService(db)
