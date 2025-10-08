@@ -100,12 +100,12 @@ async def test_update_property_status(client: AsyncClient, agent_token: str, sam
     property_id = property_data["id"]
     
     # Update status
-    status_data = {"new_status": "PROPERTY_STUDY", "notes": "Moving to study phase"}
+    status_data = {"new_status": "PROPERTY_SCREENING_FUNG_SHUI", "notes": "Moving to screening phase"}
     response = await client.patch(f"/api/v1/properties/{property_id}/status", json=status_data, headers=headers)
     assert response.status_code == 200
     
     data = response.json()
-    assert data["status"] == "PROPERTY_STUDY"
+    assert data["status"] == "PROPERTY_SCREENING_FUNG_SHUI"
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_invalid_status_transition(client: AsyncClient, agent_token: str, 
     property_id = property_data["id"]
     
     # Try invalid status transition (skip steps)
-    status_data = {"new_status": "TAKEOVER", "notes": "Invalid transition"}
+    status_data = {"new_status": "COL_DOAS_SIGNING", "notes": "Invalid transition"}
     response = await client.patch(f"/api/v1/properties/{property_id}/status", json=status_data, headers=headers)
     assert response.status_code == 400
 
@@ -154,7 +154,7 @@ async def test_property_workflow_history(client: AsyncClient, agent_token: str, 
     property_id = property_data["id"]
     
     # Update status to create history entry
-    status_data = {"new_status": "PROPERTY_STUDY", "notes": "Moving to study phase"}
+    status_data = {"new_status": "PROPERTY_SCREENING_FUNG_SHUI", "notes": "Moving to screening phase"}
     await client.patch(f"/api/v1/properties/{property_id}/status", json=status_data, headers=headers)
     
     # Get workflow history
@@ -164,5 +164,5 @@ async def test_property_workflow_history(client: AsyncClient, agent_token: str, 
     history = response.json()
     assert isinstance(history, list)
     assert len(history) == 1
-    assert history[0]["to_status"] == "PROPERTY_STUDY"
-    assert history[0]["notes"] == "Moving to study phase"
+    assert history[0]["to_status"] == "PROPERTY_SCREENING_FUNG_SHUI"
+    assert history[0]["notes"] == "Moving to screening phase"
