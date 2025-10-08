@@ -48,6 +48,7 @@ class Property(Base):
     zoning_classification: Mapped[ZoningClassification] = mapped_column(SQLEnum(ZoningClassification), nullable=False)
     title_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    referred_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # Name or company that referred this property
 
     # Status and workflow
     status: Mapped[PropertyStatus] = mapped_column(

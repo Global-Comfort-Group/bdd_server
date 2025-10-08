@@ -36,6 +36,7 @@ class PropertyBase(BaseModel):
     zoning_classification: ZoningClassification
     title_number: str
     description: Optional[str] = None
+    referred_by: Optional[str] = None
     transaction_status: TransactionStatus
 
 
@@ -87,6 +88,7 @@ class PropertyUpdate(BaseModel):
     zoning_classification: Optional[ZoningClassification] = None
     title_number: Optional[str] = None
     description: Optional[str] = None
+    referred_by: Optional[str] = None
     transaction_status: Optional[TransactionStatus] = None
     reviewer_id: Optional[int] = None
 
