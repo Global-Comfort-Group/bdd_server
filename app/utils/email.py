@@ -1,9 +1,10 @@
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import resend
 
 from app.core.config import settings
 
@@ -140,3 +141,109 @@ class EmailService:
         """
         
         return await self.send_email([user_email], subject, body, html_body)
+    async def send_property_created_notification(
+        self,
+        property_data: Dict[str, Any],
+        submitter_data: Dict[str, Any]
+    ) -> bool:
+        """Send email notification when a property is created using Resend."""
+        if not settings.RESEND_API_KEY or not settings.NOTIFICATION_EMAIL:
+            print("Resend email configuration not complete. Email not sent.")
+            return False
+
+        try:
+            # Configure Resend
+            resend.api_key = settings.RESEND_API_KEY
+
+            # Format prices
+            formatted_price = f"₱{property_data.get('price', 0):,.2f}" if property_data.get('price') else 'N/A'
+            formatted_lease_price = f"₱{property_data.get('lease_price', 0):,.2f}" if property_data.get('lease_price') else 'N/A'
+
+            # Create HTML email
+            html_body = f"""
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <style>
+                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                  .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                  .header {{ background-color: #4F46E5; color: white; padding: 20px; border-radius: 8px 8px 0 0; }}
+                  .content {{ background-color: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; }}
+                  .property-details {{ background-color: white; padding: 15px; border-radius: 8px; margin: 15px 0; }}
+                  .detail-row {{ margin: 10px 0; }}
+                  .label {{ font-weight: bold; color: #4F46E5; }}
+                  .footer {{ text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }}
+                </style>
+              </head>
+              <body>
+                <div class="container">
+                  <div class="header">
+                    <h1 style="margin: 0;">🏢 New Property Added</h1>
+                  </div>
+                  <div class="content">
+                    <p>A new property has been submitted to the BDD Property Tracker.</p>
+
+                    <div class="property-details">
+                      <div class="detail-row">
+                        <span class="label">Property Name:</span> {property_data.get('name', 'N/A')}
+                      </div>
+                      <div class="detail-row">
+                        <span class="label">Property ID:</span> #{property_data.get('id', 'N/A')}
+                      </div>
+                      <div class="detail-row">
+                        <span class="label">Address:</span> {property_data.get('address', 'N/A')}
+                      </div>
+                      <div class="detail-row">
+                        <span class="label">Property Type:</span> {property_data.get('propertyType', 'N/A')}
+                      </div>
+                      <div class="detail-row">
+                        <span class="label">Transaction Status:</span> {property_data.get('transactionStatus', 'N/A')}
+                      </div>
+                      <div class="detail-row">
+                        <span class="label">Sale Price:</span> {formatted_price}
+                      </div>
+                      <div class="detail-row">
+                        <span class="label">Lease Price:</span> {formatted_lease_price}
+                      </div>
+                      <div class="detail-row">
+                        <span class="label">Submitted By:</span> {submitter_data.get('firstName', '')} {submitter_data.get('lastName', '')}
+                      </div>
+                      <div class="detail-row">
+                        <span class="label">Submitter Email:</span> {submitter_data.get('email', 'N/A')}
+                      </div>
+                      {f'<div class="detail-row"><span class="label">Company:</span> {submitter_data.get("company")}</div>' if submitter_data.get('company') else ''}
+                      <div class="detail-row">
+                        <span class="label">Date Submitted:</span> {property_data.get('createdAt', 'N/A')}
+                      </div>
+                    </div>
+
+                    <p style="margin-top: 20px;">
+                      <a href="https://bdd-client-staging.up.railway.app/property/{property_data.get('id', '')}"
+                         style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+                        View Property Details
+                      </a>
+                    </p>
+                  </div>
+                  <div class="footer">
+                    <p>This is an automated notification from BDD Property Tracker</p>
+                  </div>
+                </div>
+              </body>
+            </html>
+            """
+
+            # Send email via Resend
+            params = {
+                "from": "BDD Property Tracker <onboarding@resend.dev>",
+                "to": [settings.NOTIFICATION_EMAIL],
+                "subject": f"New Property Added: {property_data.get('name', 'Unknown')}",
+                "html": html_body
+            }
+
+            email_result = resend.Emails.send(params)
+            print(f"✅ Property creation email sent via Resend: {email_result}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Failed to send property creation email via Resend: {e}")
+            return False

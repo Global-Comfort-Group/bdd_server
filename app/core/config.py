@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     SMTP_USER: Optional[str] = None
     SMTP_PASSWORD: Optional[str] = None
 
+    # Resend Email Service
+    RESEND_API_KEY: Optional[str] = None
+    NOTIFICATION_EMAIL: Optional[str] = None
+
     # Project info
     PROJECT_NAME: str = "BDD Property Tracker"
     VERSION: str = "1.0.0"

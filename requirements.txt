@@ -27,6 +27,7 @@ httpx==0.25.2
 geopy==2.4.0
 fuzzywuzzy==0.18.0
 python-levenshtein==0.23.0
+resend==2.19.0
 
 # Development and testing
 pytest==7.4.3

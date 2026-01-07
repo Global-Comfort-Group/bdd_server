@@ -13,6 +13,7 @@ from app.services.cloudinary_service import cloudinary_service
 from app.services.property import PropertyService
 from app.schemas.property import PropertyCreate
 from app.models.enums import PropertyType, PropertyStatus, TransactionStatus
+from app.utils.email import EmailService
 from datetime import datetime
 from decimal import Decimal
 
@@ -699,9 +700,35 @@ async def create_property(
     except Exception as e:
         print(f"⚠️  Failed to save to database: {e}")
         # Continue anyway - at least the mock version will work
-    
+
     print(f"✅ PROPERTY CREATED SUCCESSFULLY - DB ID: {new_property['id']}")
-    
+
+    # Send email notification (non-blocking)
+    try:
+        email_service = EmailService()
+        property_data = {
+            'id': new_property['id'],
+            'name': new_property['name'],
+            'address': new_property['address'],
+            'propertyType': new_property['propertyType'],
+            'transactionStatus': new_property['transactionStatus'],
+            'price': new_property['price'],
+            'lease_price': new_property.get('leasePrice'),
+            'createdAt': new_property['createdAt'].isoformat() if isinstance(new_property['createdAt'], datetime) else str(new_property['createdAt'])
+        }
+
+        submitter_data = {
+            'firstName': current_user.first_name,
+            'lastName': current_user.last_name,
+            'email': current_user.email,
+            'company': current_user.company if hasattr(current_user, 'company') else None
+        }
+
+        await email_service.send_property_created_notification(property_data, submitter_data)
+    except Exception as email_error:
+        print(f"⚠️  Failed to send email notification: {email_error}")
+        # Continue even if email fails - property was created successfully
+
     return {
         "message": "Property created successfully",
         "property": new_property
