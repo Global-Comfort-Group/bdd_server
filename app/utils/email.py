@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import resend
+from datetime import datetime
 
 from app.core.config import settings
 
@@ -159,6 +160,19 @@ class EmailService:
             formatted_price = f"₱{property_data.get('price', 0):,.2f}" if property_data.get('price') else 'N/A'
             formatted_lease_price = f"₱{property_data.get('lease_price', 0):,.2f}" if property_data.get('lease_price') else 'N/A'
 
+            # Format date as "January 8, 2025"
+            created_at = property_data.get('createdAt', '')
+            try:
+                if created_at:
+                    # Parse ISO format datetime string
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%B %d, %Y')
+                else:
+                    formatted_date = 'N/A'
+            except Exception as e:
+                print(f"Error formatting date: {e}")
+                formatted_date = created_at if created_at else 'N/A'
+
             # Create HTML email
             html_body = f"""
             <!DOCTYPE html>
@@ -213,7 +227,7 @@ class EmailService:
                       </div>
                       {f'<div class="detail-row"><span class="label">Company:</span> {submitter_data.get("company")}</div>' if submitter_data.get('company') else ''}
                       <div class="detail-row">
-                        <span class="label">Date Submitted:</span> {property_data.get('createdAt', 'N/A')}
+                        <span class="label">Date Submitted:</span> {formatted_date}
                       </div>
                     </div>
 
