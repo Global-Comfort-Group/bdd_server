@@ -471,7 +471,7 @@ async def upload_avatar(
                 detail="Avatar file size must be less than 5MB"
             )
         
-        # Upload to Cloudinary
+        # Upload to OSS
         file_storage = FileStorageService()
         upload_result = await file_storage.save_file(
             file=file,

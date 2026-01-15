@@ -169,3 +169,5 @@ htmlcov/
 # Railway/Production deployment
 railway.tomlSTAGING_CREDENTIALS.md
 
+.env.staging
+.env.*

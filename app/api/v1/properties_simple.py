@@ -9,7 +9,7 @@ from pathlib import Path
 from app.core.database import get_async_session
 from app.api.v1.auth import get_current_user, get_current_user_optional
 from app.models.user import User
-from app.services.cloudinary_service import cloudinary_service
+from app.services.file_storage import file_storage_service
 from app.services.property import PropertyService
 from app.schemas.property import PropertyCreate
 from app.models.enums import PropertyType, PropertyStatus, TransactionStatus
@@ -390,26 +390,27 @@ async def get_property(
     return property_data
 
 async def upload_file_to_cloudinary(file: UploadFile, folder: str = "properties") -> dict:
-    """Upload file to Cloudinary and return the file info."""
+    """Upload file to OSS and return the file info.
+    Note: Function name kept for backward compatibility."""
     try:
-        # Upload to Cloudinary
-        result = await cloudinary_service.upload_file(
+        # Upload to OSS
+        result = await file_storage_service.save_file(
             file=file,
             subfolder=folder
         )
-        
-        print(f"✅ Cloudinary upload successful: {file.filename}")
+
+        print(f"✅ OSS upload successful: {file.filename}")
         print(f"🔗 URL: {result['secure_url']}")
-        
+
         return {
-            "cloudinary_id": result["public_id"],
+            "cloudinary_id": result["object_key"],  # OSS object key
             "url": result["secure_url"],
             "original_filename": result["original_filename"],
             "file_size": result["file_size"],
             "mime_type": result["mime_type"]
         }
     except Exception as e:
-        print(f"❌ Cloudinary upload failed for {file.filename}: {e}")
+        print(f"❌ OSS upload failed for {file.filename}: {e}")
         raise HTTPException(
             status_code=400,
             detail=f"Failed to upload {file.filename}: {str(e)}"

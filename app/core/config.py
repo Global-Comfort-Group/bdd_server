@@ -35,11 +35,20 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = 10485760  # 10MB
     UPLOAD_DIRECTORY: str = "./uploads"
 
-    # Cloudinary (for file uploads)
+    # Cloudinary (for file uploads - legacy)
     CLOUDINARY_CLOUD_NAME: Optional[str] = None
     CLOUDINARY_API_KEY: Optional[str] = None
     CLOUDINARY_API_SECRET: Optional[str] = None
     CLOUDINARY_FOLDER: str = "BDD_CLOUDINARY"  # Default folder for organization
+
+    # Alibaba Cloud OSS (primary file storage)
+    # Use internal endpoint (oss-ap-southeast-6-internal.aliyuncs.com) when on Alibaba Cloud ECS
+    # Use public endpoint (oss-ap-southeast-6.aliyuncs.com) for local development
+    OSS_ACCESS_KEY_ID: Optional[str] = None
+    OSS_ACCESS_KEY_SECRET: Optional[str] = None
+    OSS_BUCKET_NAME: str = "bdd-oss-goli"
+    OSS_ENDPOINT: str = "oss-ap-southeast-6.aliyuncs.com"
+    OSS_REGION: str = "ap-southeast-6"
 
     # Google Services (optional)
     GOOGLE_MAPS_API_KEY: Optional[str] = None

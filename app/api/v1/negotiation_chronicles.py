@@ -13,7 +13,7 @@ from app.schemas.negotiation_chronicle import (
     FileUploadResponse
 )
 from app.services.file_parser import parse_negotiation_file
-from app.services.cloudinary_service import cloudinary_service
+from app.services.file_storage import file_storage_service
 import os
 
 router = APIRouter()
@@ -70,8 +70,8 @@ async def upload_negotiation_chronicle(
             # Reset file pointer for upload
             await file.seek(0)
             
-            # Upload file to storage (Cloudinary)
-            upload_result = await cloudinary_service.upload_file(file, subfolder="negotiation_chronicles")
+            # Upload file to storage (OSS)
+            upload_result = await file_storage_service.save_file(file, subfolder="negotiation_chronicles")
             file_url = upload_result["secure_url"]
             filename = file.filename
             file_type = file.filename.split('.')[-1].lower()
