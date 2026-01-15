@@ -338,12 +338,13 @@ class ProfileUpdate(BaseModel):
     @field_validator('phone')
     @classmethod
     def validate_philippines_phone(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
+        # Treat empty string as None (no change)
+        if v is None or v == '':
+            return None
         import re
         mobile_pattern = r'^(\+63|63|0)?[89]\d{9}$'
         landline_pattern = r'^(\+63|63|0)?[2-8]\d{7,8}$'
-        
+
         if not (re.match(mobile_pattern, v) or re.match(landline_pattern, v)):
             raise ValueError('Please enter a valid Philippines phone number')
         return v
