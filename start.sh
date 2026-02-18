@@ -19,10 +19,9 @@ if [ ${#missing_vars[@]} -ne 0 ]; then
         echo "  - $var"
     done
     echo ""
-    echo "Please set these variables in Railway dashboard:"
-    echo "1. Go to your service settings"
-    echo "2. Click on 'Variables' tab"
-    echo "3. Add the missing variables"
+    echo "Please set these variables in your deployment environment:"
+    echo "1. Update your .env file or Docker environment"
+    echo "2. Add the missing variables"
     exit 1
 fi
 

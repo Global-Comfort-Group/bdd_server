@@ -108,7 +108,7 @@ All endpoints under `/api/v1/` with clear resource-based routing:
 Properties can only transition between adjacent workflow stages. The `WorkflowService` validates all transitions and maintains history.
 
 **File Upload System**
-Supports property attachments with validation for file types, sizes, and storage management compatible with Railway deployment.
+Supports property attachments with validation for file types, sizes, and storage management using Alibaba Cloud OSS.
 
 ## Environment Configuration
 
@@ -121,11 +121,12 @@ MAX_FILE_SIZE=10485760  # 10MB
 GOOGLE_MAPS_API_KEY=optional-for-geocoding
 ```
 
-### Railway Deployment
-The system is configured for Railway deployment with:
-- `railway.toml` configuration
+### Alibaba Cloud Deployment
+The system is deployed on Alibaba Cloud ECS with:
+- Docker Compose configuration
 - Health check endpoint at `/health`
-- PostgreSQL service integration
+- Alibaba Cloud RDS PostgreSQL
+- Alibaba Cloud OSS for file storage
 - Environment-based configuration management
 
 ### Database Schema Notes

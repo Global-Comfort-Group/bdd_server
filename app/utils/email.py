@@ -232,7 +232,7 @@ class EmailService:
                     </div>
 
                     <p style="margin-top: 20px;">
-                      <a href="https://bdd-client-staging.up.railway.app/property/{property_data.get('id', '')}"
+                      <a href="https://bdd-staging.hotelsogo-ai.com/property/{property_data.get('id', '')}"
                          style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
                         View Property Details
                       </a>

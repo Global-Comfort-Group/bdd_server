@@ -166,8 +166,8 @@ private_key.pem
 htmlcov/
 .tox/
 
-# Railway/Production deployment
-railway.tomlSTAGING_CREDENTIALS.md
+# Production deployment
+STAGING_CREDENTIALS.md
 
 .env.staging
 .env.*
