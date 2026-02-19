@@ -331,22 +331,42 @@ class ProfileUpdate(BaseModel):
     first_name: Optional[str] = None
     middle_name: Optional[str] = None
     last_name: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None  # Changed from EmailStr to allow empty string handling
     phone: Optional[str] = None
     company: Optional[str] = None
-    
-    @field_validator('phone')
+
+    @field_validator('first_name', 'middle_name', 'last_name', 'company', mode='before')
     @classmethod
-    def validate_philippines_phone(cls, v: Optional[str]) -> Optional[str]:
-        # Treat empty string as None (no change)
+    def empty_string_to_none(cls, v: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None for optional fields"""
+        if v == '':
+            return None
+        return v
+
+    @field_validator('email', mode='before')
+    @classmethod
+    def validate_email(cls, v: Optional[str]) -> Optional[str]:
+        """Validate email, treating empty string as None"""
+        if v is None or v == '':
+            return None
+        # Basic email validation
+        import re
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Please enter a valid email address')
+        return v
+
+    @field_validator('phone', mode='before')
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        """Validate phone, treating empty string as None"""
         if v is None or v == '':
             return None
         import re
-        mobile_pattern = r'^(\+63|63|0)?[89]\d{9}$'
-        landline_pattern = r'^(\+63|63|0)?[2-8]\d{7,8}$'
-
-        if not (re.match(mobile_pattern, v) or re.match(landline_pattern, v)):
-            raise ValueError('Please enter a valid Philippines phone number')
+        # Strip spaces and dashes for validation
+        cleaned = re.sub(r'[\s\-()]', '', v)
+        # Accept any reasonable phone number format (7-15 digits, optional + prefix)
+        if not re.match(r'^\+?\d{7,15}$', cleaned):
+            raise ValueError('Please enter a valid phone number')
         return v
 
 
