@@ -20,7 +20,43 @@ from app.schemas.workflow import StatusUpdateRequest
 from app.services.property import PropertyService
 from app.services.workflow import WorkflowService
 from app.services.file_storage import FileStorageService
+from app.services.oss_service import get_oss_service
 from app.api.v1.auth import get_current_user
+
+
+def _serialize_attachment_with_signed_url(att) -> dict:
+    """Serialize an attachment with a signed OSS URL for access."""
+    try:
+        oss_service = get_oss_service()
+        object_key = att.cloudinary_public_id if hasattr(att, 'cloudinary_public_id') else None
+        if object_key:
+            signed_url = oss_service.generate_signed_url(object_key, expires=3600)
+        else:
+            signed_url = att.cloudinary_secure_url if hasattr(att, 'cloudinary_secure_url') else None
+    except Exception:
+        signed_url = att.cloudinary_secure_url if hasattr(att, 'cloudinary_secure_url') else None
+
+    return {
+        "id": att.id,
+        "property_id": att.property_id,
+        "original_filename": att.original_filename,
+        "filename": att.filename,
+        "file_name": att.filename,
+        "fileName": att.original_filename,
+        "mime_type": att.mime_type,
+        "file_type": att.mime_type,
+        "fileType": att.mime_type,
+        "file_size": att.file_size,
+        "fileSize": att.file_size,
+        "cloudinary_public_id": att.cloudinary_public_id if hasattr(att, 'cloudinary_public_id') else None,
+        "cloudinary_url": signed_url,
+        "cloudinary_secure_url": signed_url,
+        "file_url": signed_url,
+        "fileUrl": signed_url,
+        "uploaded_by_id": att.uploaded_by_id if hasattr(att, 'uploaded_by_id') else None,
+        "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
+        "uploadedAt": att.uploaded_at.isoformat() if att.uploaded_at else None,
+    }
 
 router = APIRouter(prefix="/properties", tags=["properties"])
 
@@ -139,29 +175,11 @@ async def list_properties(
         else:
             property_dict["reviewer"] = None
             
-        # Add attachments - transform to include Cloudinary URLs
+        # Add attachments with signed OSS URLs
         attachments_list = []
         if hasattr(prop, 'attachments') and prop.attachments:
             for att in prop.attachments:
-                attachments_list.append({
-                    "id": att.id,
-                    "property_id": att.property_id,
-                    "original_filename": att.original_filename,
-                    "filename": att.filename,
-                    "file_name": att.filename,  # alias
-                    "fileName": att.original_filename,  # client format
-                    "mime_type": att.mime_type,
-                    "file_type": att.mime_type,  # alias
-                    "fileType": att.mime_type,  # client format
-                    "file_size": att.file_size,
-                    "fileSize": att.file_size,  # client format
-                    "cloudinary_url": att.cloudinary_url if hasattr(att, 'cloudinary_url') else None,
-                    "cloudinary_secure_url": att.cloudinary_secure_url if hasattr(att, 'cloudinary_secure_url') else None,
-                    "file_url": att.cloudinary_secure_url if hasattr(att, 'cloudinary_secure_url') else att.cloudinary_url if hasattr(att, 'cloudinary_url') else None,
-                    "fileUrl": att.cloudinary_secure_url if hasattr(att, 'cloudinary_secure_url') else att.cloudinary_url if hasattr(att, 'cloudinary_url') else None,  # client format
-                    "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
-                    "uploadedAt": att.uploaded_at.isoformat() if att.uploaded_at else None,  # client format
-                })
+                attachments_list.append(_serialize_attachment_with_signed_url(att))
         
         property_dict["attachments"] = attachments_list
         property_dict["workflowHistory"] = []  # Keep empty for list performance
@@ -259,7 +277,7 @@ async def get_property(
         "reviewer_id": property_obj.reviewer_id,
         "created_at": property_obj.created_at,
         "updated_at": property_obj.updated_at,
-        "attachments": property_obj.attachments,
+        "attachments": [_serialize_attachment_with_signed_url(att) for att in property_obj.attachments],
         "workflow_history": property_obj.workflow_history,
     }
     
@@ -535,7 +553,7 @@ async def list_property_attachments(
         raise HTTPException(status_code=403, detail="Not authorized to view attachments")
     
     attachments = await property_service.get_property_attachments(property_id)
-    return attachments
+    return [_serialize_attachment_with_signed_url(att) for att in attachments]
 
 
 @router.get("/dashboard/statistics")

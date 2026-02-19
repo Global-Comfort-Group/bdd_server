@@ -10,6 +10,7 @@ from app.core.database import get_async_session
 from app.models.property import PropertyAttachment, Property
 from app.schemas.property import PropertyAttachmentRead
 from app.services.file_storage import file_storage_service
+from app.services.oss_service import get_oss_service
 from app.api.v1.auth import get_current_user
 from app.models.user import User, UserRole
 
@@ -191,8 +192,13 @@ async def get_attachment_thumbnail(
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    # Return the secure URL (OSS doesn't have built-in image transformation)
-    return {"thumbnail_url": attachment.cloudinary_secure_url}
+    # Return a signed URL for access
+    try:
+        oss_service = get_oss_service()
+        signed_url = oss_service.generate_signed_url(attachment.cloudinary_public_id, expires=3600)
+        return {"thumbnail_url": signed_url}
+    except Exception:
+        return {"thumbnail_url": attachment.cloudinary_secure_url}
 
 
 @router.post("/test-upload")

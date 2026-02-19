@@ -18,9 +18,10 @@ class NotificationService:
     async def create_notification(
         self, 
         notification_data: NotificationCreate,
-        send_email: bool = True
+        send_email: bool = True,
+        send_realtime: bool = True
     ) -> Notification:
-        """Create a new notification and optionally send email"""
+        """Create a new notification and optionally send email/realtime"""
         notification = Notification(
             user_id=notification_data.user_id,
             notification_type=notification_data.notification_type,
@@ -37,6 +38,10 @@ class NotificationService:
         # Send email notification if requested
         if send_email:
             await self._send_email_notification(notification)
+        
+        # Send real-time notification via WebSocket
+        if send_realtime:
+            await self._send_realtime_notification(notification)
         
         return notification
     
@@ -146,6 +151,26 @@ class NotificationService:
         </body>
         </html>
         """
+    
+    async def _send_realtime_notification(self, notification: Notification):
+        """Send real-time notification via WebSocket"""
+        try:
+            # Import here to avoid circular imports
+            from app.api.v1.websocket_notifications import send_notification_to_user
+            
+            notification_data = {
+                "id": notification.id,
+                "type": notification.notification_type.value,
+                "title": notification.title,
+                "message": notification.message,
+                "property_id": notification.property_id,
+                "is_read": notification.is_read,
+                "created_at": notification.created_at.isoformat()
+            }
+            
+            await send_notification_to_user(notification.user_id, notification_data)
+        except Exception as e:
+            print(f"Failed to send real-time notification: {e}")
     
     async def create_duplicate_notification(
         self,

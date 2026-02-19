@@ -41,6 +41,13 @@ class OSSService:
         else:
             self.public_endpoint = endpoint
 
+        # Create a public bucket instance for generating signed URLs accessible from browsers
+        self.public_bucket = oss2.Bucket(
+            self.auth,
+            f"https://{self.public_endpoint}",
+            settings.OSS_BUCKET_NAME
+        )
+
     def _get_public_url(self, object_key: str) -> str:
         """Generate public URL for an object"""
         return f"https://{settings.OSS_BUCKET_NAME}.{self.public_endpoint}/{object_key}"
@@ -208,7 +215,7 @@ class OSSService:
             Signed URL
         """
         try:
-            return self.bucket.sign_url(method, object_key, expires)
+            return self.public_bucket.sign_url(method, object_key, expires)
         except OssError as e:
             raise HTTPException(
                 status_code=400,
