@@ -17,6 +17,7 @@ from app.api.v1.notifications import router as notifications_router
 from app.api.v1.nego_tables_simple import router as nego_tables_router
 # from app.api.v1.draft_nego_tables import router as draft_nego_tables_router
 from app.api.v1.negotiation_chronicles import router as negotiation_chronicles_router
+from app.api.v1.nego_ai_analysis import router as nego_ai_analysis_router
 from app.api.admin import admin_router
 from app.api.v1.uploads import router as uploads_router
 from app.api.v1.address import router as address_router
@@ -123,6 +124,12 @@ app.include_router(
     negotiation_chronicles_router,
     prefix=f"{settings.API_V1_PREFIX}/negotiation-chronicles",
     tags=["negotiation-chronicles"]
+)
+
+app.include_router(
+    nego_ai_analysis_router,
+    prefix=f"{settings.API_V1_PREFIX}/nego-ai-analysis",
+    tags=["nego-ai-analysis"]
 )
 
 # app.include_router(
