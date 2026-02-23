@@ -33,7 +33,8 @@ class NegotiationChronicleAttachment(NegotiationChronicleAttachmentBase):
     upload_date: Union[datetime, str]  # Accept both datetime objects and ISO strings
     created_at: Union[datetime, str]  # Accept both datetime objects and ISO strings
     updated_at: Union[datetime, str, None] = None  # Accept both datetime objects and ISO strings
-    
+    ai_result: Optional[Dict[str, Any]] = None  # Full Gemini AI analysis result (timeline mode)
+
     class Config:
         from_attributes = True
         json_encoders = {

@@ -18,6 +18,9 @@ class NegotiationChronicleAttachment(Base):
     # Parsed data stored as JSON
     # Structure: [{"header": "Property Name", "value": "...", "agreed_amount": 0, "for_nego": 0}, ...]
     parsed_data = Column(JSON, nullable=False)
+
+    # Full Gemini AI analysis result (timeline mode)
+    ai_result = Column(JSON, nullable=True)
     
     # Metadata
     uploaded_by = Column(Integer, ForeignKey("user.id"), nullable=True)  # Optional - supports anonymous uploads
