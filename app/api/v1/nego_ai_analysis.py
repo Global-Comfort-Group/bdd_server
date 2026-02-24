@@ -291,7 +291,7 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
 
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
-        f"/gemini-2.0-flash:generateContent?key={api_key}"
+        f"/gemini-1.5-flash:generateContent?key={api_key}"
     )
     payload = {
         "system_instruction": {"parts": [{"text": _COMPARISON_SYSTEM_INSTRUCTION}]},
@@ -326,7 +326,7 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
 
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
-        f"/gemini-2.0-flash:generateContent?key={api_key}"
+        f"/gemini-1.5-flash:generateContent?key={api_key}"
     )
     payload = {
         "system_instruction": {"parts": [{"text": _SYSTEM_INSTRUCTION}]},
