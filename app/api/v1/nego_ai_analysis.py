@@ -646,6 +646,17 @@ async def upload_for_property(
         await db.refresh(nego_table)
         print(f"✅ Auto-created NegoTable {nego_table.id} for property {property_id}")
 
+    # Replace existing attachments — keep only the latest per NegoTable
+    old_attachments_result = await db.execute(
+        select(NegotiationChronicleAttachment).where(
+            NegotiationChronicleAttachment.nego_table_id == nego_table.id
+        )
+    )
+    for old in old_attachments_result.scalars().all():
+        await db.delete(old)
+    await db.commit()
+    print(f"🗑️  Cleared old attachments for nego table {nego_table.id}")
+
     # Upload file to OSS storage
     await file.seek(0)
     try:
