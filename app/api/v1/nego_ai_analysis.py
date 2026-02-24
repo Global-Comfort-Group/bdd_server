@@ -1,6 +1,7 @@
 import io
 import csv
 import json
+from datetime import datetime
 from typing import Optional, List
 
 import openpyxl
@@ -620,6 +621,7 @@ async def upload_for_property(
             property_id=property_id,
             status=NegoTableStatus.ACTIVE,
             created_by_id=current_user.id,
+            referred_date=datetime.utcnow(),
         )
         db.add(nego_table)
         await db.commit()
