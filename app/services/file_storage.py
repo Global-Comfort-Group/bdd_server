@@ -136,8 +136,24 @@ class FileStorageService:
         return Path(filename).suffix.lower()
 
     def validate_file_type(self, file: UploadFile) -> bool:
-        """Validate if file type is allowed."""
-        return file.content_type in self.allowed_types
+        """Validate if file type is allowed, checking content-type and file extension."""
+        # Primary check: content-type header
+        if file.content_type in self.allowed_types:
+            return True
+        # Fallback: guess from extension when browser omits content-type (e.g. WebP on some systems)
+        ext = Path(file.filename or '').suffix.lower()
+        extension_types = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp',
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.txt': 'text/plain', '.csv': 'text/csv',
+        }
+        guessed = extension_types.get(ext)
+        return guessed in self.allowed_types if guessed else False
 
     def get_file_info(self, object_key: str) -> Dict[str, Any]:
         """
