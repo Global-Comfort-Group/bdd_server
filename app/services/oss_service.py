@@ -57,7 +57,6 @@ class OSSService:
         file: UploadFile,
         subfolder: str = "uploads",
         custom_filename: Optional[str] = None,
-        public: bool = False
     ) -> Dict[str, Any]:
         """
         Upload file to Alibaba Cloud OSS
@@ -99,17 +98,13 @@ class OSSService:
             content_type = file.content_type or "application/octet-stream"
 
             # Upload to OSS
-            upload_headers = {
-                'Content-Type': content_type,
-                'x-oss-storage-class': 'Standard'
-            }
-            if public:
-                upload_headers['x-oss-object-acl'] = 'public-read'
-
             result = self.bucket.put_object(
                 object_key,
                 file_content,
-                headers=upload_headers
+                headers={
+                    'Content-Type': content_type,
+                    'x-oss-storage-class': 'Standard'
+                }
             )
 
             # Reset file position for potential reuse

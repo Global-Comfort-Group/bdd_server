@@ -493,15 +493,23 @@ async def upload_avatar(
             )
         
         # Upload to OSS
+        from app.services.oss_service import get_oss_service
         file_storage = FileStorageService()
         upload_result = await file_storage.save_file(
             file=file,
-            subfolder=f"avatars/user_{current_user.id}",
-            public=True
+            subfolder=f"avatars/user_{current_user.id}"
         )
-        
+
+        # OSS bucket has private ACL — generate a 1-year signed URL so the
+        # browser can load the image directly without credentials
+        oss_service = get_oss_service()
+        signed_url = oss_service.generate_signed_url(
+            upload_result["object_key"],
+            expires=365 * 24 * 3600  # 1 year
+        )
+
         # Update user's avatar URL
-        current_user.avatar_url = upload_result["secure_url"]
+        current_user.avatar_url = signed_url
         current_user.updated_at = datetime.utcnow()
         await db.commit()
         await db.refresh(current_user)
