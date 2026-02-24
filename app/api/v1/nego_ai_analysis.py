@@ -304,7 +304,7 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
         },
     }
 
-    async with httpx.AsyncClient(timeout=90.0) as http_client:
+    async with httpx.AsyncClient(timeout=300.0) as http_client:
         gemini_response = await http_client.post(gemini_url, json=payload)
 
     if gemini_response.status_code != 200:
@@ -339,7 +339,7 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
         },
     }
 
-    async with httpx.AsyncClient(timeout=90.0) as http_client:
+    async with httpx.AsyncClient(timeout=300.0) as http_client:
         gemini_response = await http_client.post(gemini_url, json=payload)
 
     if gemini_response.status_code != 200:
