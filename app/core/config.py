@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
     # Google Services (optional)
     GOOGLE_MAPS_API_KEY: Optional[str] = None
+    GOOGLE_GEMINI_API_KEY: Optional[str] = None
 
     # Email (optional)
     SMTP_HOST: Optional[str] = None

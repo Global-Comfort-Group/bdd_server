@@ -56,7 +56,7 @@ class OSSService:
         self,
         file: UploadFile,
         subfolder: str = "uploads",
-        custom_filename: Optional[str] = None
+        custom_filename: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload file to Alibaba Cloud OSS

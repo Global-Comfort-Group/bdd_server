@@ -19,6 +19,8 @@ python-multipart==0.0.7
 python-magic==0.4.27
 pillow==10.1.0
 openpyxl==3.1.2
+xlrd==2.0.1
+# google-genai SDK intentionally omitted — Gemini called via REST (httpx) to avoid pydantic conflicts
 cloudinary==1.36.0
 oss2==2.18.4  # Alibaba Cloud OSS SDK
 
