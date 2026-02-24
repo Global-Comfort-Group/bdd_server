@@ -301,6 +301,7 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
         "generationConfig": {
             "temperature": 0.1,
             "responseMimeType": "application/json",
+            "maxOutputTokens": 8192,
         },
     }
 
@@ -336,6 +337,7 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
         "generationConfig": {
             "temperature": 0.1,
             "responseMimeType": "application/json",
+            "maxOutputTokens": 8192,
         },
     }
 
