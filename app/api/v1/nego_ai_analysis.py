@@ -16,6 +16,7 @@ from app.models.negotiation_chronicle import NegotiationChronicleAttachment
 from app.models.nego_table import NegoTable
 from app.models.property import Property
 from app.models.user import User
+from app.schemas.negotiation_chronicle import NegotiationChronicleAttachment as NegotiationChronicleAttachmentSchema
 from app.services.file_storage import file_storage_service
 from sqlalchemy import select
 
@@ -688,3 +689,29 @@ async def upload_for_property(
         ai_result=ai_result,
         nego_table_id=nego_table.id,
     )
+
+
+@router.get("/attachments-for-property/{property_id}", response_model=List[NegotiationChronicleAttachmentSchema])
+async def get_attachments_for_property(
+    property_id: int,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get all negotiation attachments for a property directly by property_id.
+    Bypasses the in-memory nego_tables_simple router — queries the real DB.
+    Used by the property detail page on every load/refresh.
+    """
+    # Find NegoTable for this property in the DB
+    result = await db.execute(select(NegoTable).where(NegoTable.property_id == property_id))
+    nego_table = result.scalar_one_or_none()
+    if not nego_table:
+        return []
+
+    # Return all attachments ordered newest first
+    attachments_result = await db.execute(
+        select(NegotiationChronicleAttachment)
+        .where(NegotiationChronicleAttachment.nego_table_id == nego_table.id)
+        .order_by(NegotiationChronicleAttachment.created_at.desc())
+    )
+    return attachments_result.scalars().all()
