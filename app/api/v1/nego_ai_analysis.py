@@ -5,7 +5,7 @@ from typing import Optional, List
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth import get_current_user
@@ -64,12 +64,17 @@ class UploadAnalysisResponse(BaseModel):
 
 class NegotiationItem(BaseModel):
     title: str
-    bdd_offer: str
-    client_offer: str
+    bdd_offer: str = ""
+    client_offer: str = ""
     status: str = "negotiating"  # "agreed" | "negotiating"
     agreed_date: Optional[str] = None
     final_value: Optional[str] = None
     notes: Optional[str] = None
+
+    @field_validator('title', 'bdd_offer', 'client_offer', mode='before')
+    @classmethod
+    def coerce_none_to_str(cls, v: object) -> str:
+        return "" if v is None else str(v)
 
 
 class AIComparisonResult(BaseModel):
