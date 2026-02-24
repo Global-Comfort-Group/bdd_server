@@ -496,7 +496,8 @@ async def upload_avatar(
         file_storage = FileStorageService()
         upload_result = await file_storage.save_file(
             file=file,
-            subfolder=f"avatars/user_{current_user.id}"
+            subfolder=f"avatars/user_{current_user.id}",
+            public=True
         )
         
         # Update user's avatar URL

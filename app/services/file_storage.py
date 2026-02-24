@@ -24,7 +24,7 @@ class FileStorageService:
             'text/plain', 'text/csv'
         }
 
-    async def save_file(self, file: UploadFile, subfolder: str = "properties") -> Dict[str, Any]:
+    async def save_file(self, file: UploadFile, subfolder: str = "properties", public: bool = False) -> Dict[str, Any]:
         """
         Save uploaded file to Alibaba Cloud OSS.
 
@@ -56,7 +56,8 @@ class FileStorageService:
             # Upload to OSS
             result = await oss_service.upload_file(
                 file=file,
-                subfolder=subfolder
+                subfolder=subfolder,
+                public=public
             )
 
             return result
