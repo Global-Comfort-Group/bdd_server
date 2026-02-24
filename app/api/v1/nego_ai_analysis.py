@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.database import get_async_session
 from app.models.negotiation_chronicle import NegotiationChronicleAttachment
 from app.models.nego_table import NegoTable
+from app.models.property import Property
 from app.models.user import User
 from app.services.file_storage import file_storage_service
 from sqlalchemy import select
@@ -617,11 +618,28 @@ async def upload_for_property(
     result = await db.execute(select(NegoTable).where(NegoTable.property_id == property_id))
     nego_table = result.scalar_one_or_none()
     if not nego_table:
+        # Load property to seed required NOT NULL fields
+        prop_result = await db.execute(select(Property).where(Property.id == property_id))
+        prop = prop_result.scalar_one_or_none()
+        prop_name = prop.name if prop else "Unknown"
+        prop_address = prop.address if prop else "Unknown"
+        prop_type = str(prop.property_type.value) if prop else "Unknown"
+        prop_lot_area = float(prop.lot_area) if prop else 0.0
+
         nego_table = NegoTable(
             property_id=property_id,
             status=NegoTableStatus.ACTIVE,
             created_by_id=current_user.id,
             referred_date=datetime.utcnow(),
+            source_origin="Upload",
+            original_property_name=prop_name,
+            current_property_name=prop_name,
+            original_location=prop_address,
+            current_location=prop_address,
+            original_property_type=prop_type,
+            current_property_type=prop_type,
+            original_lot_area=prop_lot_area,
+            current_lot_area=prop_lot_area,
         )
         db.add(nego_table)
         await db.commit()
