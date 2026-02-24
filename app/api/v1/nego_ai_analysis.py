@@ -316,7 +316,14 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
         )
 
     gemini_data = gemini_response.json()
-    result_text = gemini_data["candidates"][0]["content"]["parts"][0]["text"]
+    candidate = gemini_data["candidates"][0]
+    finish_reason = candidate.get("finishReason", "STOP")
+    if finish_reason == "MAX_TOKENS":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AI response was truncated (output token limit hit). Please try with a smaller file.",
+        )
+    result_text = candidate["content"]["parts"][0]["text"]
     result_dict = json.loads(result_text)
     return AIComparisonResult(**result_dict)
 
@@ -351,7 +358,14 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
         )
 
     gemini_data = gemini_response.json()
-    result_text = gemini_data["candidates"][0]["content"]["parts"][0]["text"]
+    candidate = gemini_data["candidates"][0]
+    finish_reason = candidate.get("finishReason", "STOP")
+    if finish_reason == "MAX_TOKENS":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AI response was truncated (output token limit hit). Please try with a smaller file.",
+        )
+    result_text = candidate["content"]["parts"][0]["text"]
     result_dict = json.loads(result_text)
     return AIAnalysisResult(**result_dict)
 
