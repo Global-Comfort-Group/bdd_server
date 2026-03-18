@@ -248,7 +248,7 @@ class EmailService:
 
             # Send email via Resend
             params = {
-                "from": "BDD Property Tracker <onboarding@resend.dev>",
+                "from": "BDD Property Tracker <noreply@hotelsogo-ai.com>",
                 "to": [settings.NOTIFICATION_EMAIL],
                 "subject": f"New Property Added: {property_data.get('name', 'Unknown')}",
                 "html": html_body
