@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     # Resend Email Service
     RESEND_API_KEY: Optional[str] = None
     NOTIFICATION_EMAIL: Optional[str] = None
+    RESEND_TEMPLATE_ID: Optional[str] = None
+    FRONTEND_URL: str = "https://bdd.hotelsogo-ai.com"
 
     # Project info
     PROJECT_NAME: str = "BDD Property Tracker"

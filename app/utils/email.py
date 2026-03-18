@@ -153,106 +153,71 @@ class EmailService:
             return False
 
         try:
-            # Configure Resend
             resend.api_key = settings.RESEND_API_KEY
 
             # Format prices
             formatted_price = f"₱{property_data.get('price', 0):,.2f}" if property_data.get('price') else 'N/A'
             formatted_lease_price = f"₱{property_data.get('lease_price', 0):,.2f}" if property_data.get('lease_price') else 'N/A'
 
-            # Format date as "January 8, 2025"
+            # Format date
             created_at = property_data.get('createdAt', '')
             try:
-                if created_at:
-                    # Parse ISO format datetime string
-                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                    formatted_date = dt.strftime('%B %d, %Y')
-                else:
-                    formatted_date = 'N/A'
-            except Exception as e:
-                print(f"Error formatting date: {e}")
-                formatted_date = created_at if created_at else 'N/A'
+                formatted_date = datetime.fromisoformat(created_at.replace('Z', '+00:00')).strftime('%B %d, %Y') if created_at else 'N/A'
+            except Exception:
+                formatted_date = created_at or 'N/A'
 
-            # Create HTML email
-            html_body = f"""
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <style>
-                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                  .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                  .header {{ background-color: #4F46E5; color: white; padding: 20px; border-radius: 8px 8px 0 0; }}
-                  .content {{ background-color: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; }}
-                  .property-details {{ background-color: white; padding: 15px; border-radius: 8px; margin: 15px 0; }}
-                  .detail-row {{ margin: 10px 0; }}
-                  .label {{ font-weight: bold; color: #4F46E5; }}
-                  .footer {{ text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }}
-                </style>
-              </head>
-              <body>
-                <div class="container">
-                  <div class="header">
-                    <h1 style="margin: 0;">🏢 New Property Added</h1>
-                  </div>
-                  <div class="content">
-                    <p>A new property has been submitted to the BDD Property Tracker.</p>
+            property_id = property_data.get('id', '')
+            property_url = f"{settings.FRONTEND_URL}/property/{property_id}"
 
-                    <div class="property-details">
-                      <div class="detail-row">
-                        <span class="label">Property Name:</span> {property_data.get('name', 'N/A')}
-                      </div>
-                      <div class="detail-row">
-                        <span class="label">Property ID:</span> #{property_data.get('id', 'N/A')}
-                      </div>
-                      <div class="detail-row">
-                        <span class="label">Address:</span> {property_data.get('address', 'N/A')}
-                      </div>
-                      <div class="detail-row">
-                        <span class="label">Property Type:</span> {property_data.get('propertyType', 'N/A')}
-                      </div>
-                      <div class="detail-row">
-                        <span class="label">Transaction Status:</span> {property_data.get('transactionStatus', 'N/A')}
-                      </div>
-                      <div class="detail-row">
-                        <span class="label">Sale Price:</span> {formatted_price}
-                      </div>
-                      <div class="detail-row">
-                        <span class="label">Lease Price:</span> {formatted_lease_price}
-                      </div>
-                      <div class="detail-row">
-                        <span class="label">Submitted By:</span> {submitter_data.get('firstName', '')} {submitter_data.get('lastName', '')}
-                      </div>
-                      <div class="detail-row">
-                        <span class="label">Submitter Email:</span> {submitter_data.get('email', 'N/A')}
-                      </div>
-                      {f'<div class="detail-row"><span class="label">Company:</span> {submitter_data.get("company")}</div>' if submitter_data.get('company') else ''}
-                      <div class="detail-row">
-                        <span class="label">Date Submitted:</span> {formatted_date}
-                      </div>
-                    </div>
+            template_id = getattr(settings, 'RESEND_TEMPLATE_ID', None)
 
-                    <p style="margin-top: 20px;">
-                      <a href="https://bdd-staging.hotelsogo-ai.com/property/{property_data.get('id', '')}"
-                         style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-                        View Property Details
-                      </a>
-                    </p>
-                  </div>
-                  <div class="footer">
-                    <p>This is an automated notification from BDD Property Tracker</p>
-                  </div>
-                </div>
-              </body>
-            </html>
-            """
-
-            # Send email via Resend
-            params = {
-                "from": "BDD Property Tracker <noreply@hotelsogo-ai.com>",
-                "to": [settings.NOTIFICATION_EMAIL],
-                "subject": f"New Property Added: {property_data.get('name', 'Unknown')}",
-                "html": html_body
-            }
+            if template_id:
+                # Use Resend template with variables
+                params = {
+                    "from": "BDD Property Tracker <noreply@hotelsogo-ai.com>",
+                    "to": [settings.NOTIFICATION_EMAIL],
+                    "subject": f"New Property Submission: {property_data.get('name', 'Unknown')}",
+                    "template_id": template_id,
+                    "variables": [{
+                        "email": settings.NOTIFICATION_EMAIL,
+                        "substitutions": [
+                            {"var": "property_name",      "value": property_data.get('name', 'N/A')},
+                            {"var": "property_id",        "value": str(property_id)},
+                            {"var": "address",            "value": property_data.get('address', 'N/A')},
+                            {"var": "property_type",      "value": property_data.get('propertyType', 'N/A')},
+                            {"var": "transaction_status", "value": property_data.get('transactionStatus', 'N/A')},
+                            {"var": "sale_price",         "value": formatted_price},
+                            {"var": "lease_price",        "value": formatted_lease_price},
+                            {"var": "submitter_name",     "value": f"{submitter_data.get('firstName', '')} {submitter_data.get('lastName', '')}".strip()},
+                            {"var": "submitter_email",    "value": submitter_data.get('email', 'N/A')},
+                            {"var": "company",            "value": submitter_data.get('company', '')},
+                            {"var": "submitted_date",     "value": formatted_date},
+                            {"var": "property_url",       "value": property_url},
+                        ]
+                    }]
+                }
+            else:
+                # Fallback: plain inline HTML (no template configured)
+                params = {
+                    "from": "BDD Property Tracker <noreply@hotelsogo-ai.com>",
+                    "to": [settings.NOTIFICATION_EMAIL],
+                    "subject": f"New Property Submission: {property_data.get('name', 'Unknown')}",
+                    "html": f"""
+                    <p><strong>New property submitted to BDD Property Tracker.</strong></p>
+                    <ul>
+                      <li><strong>Name:</strong> {property_data.get('name', 'N/A')}</li>
+                      <li><strong>ID:</strong> #{property_id}</li>
+                      <li><strong>Address:</strong> {property_data.get('address', 'N/A')}</li>
+                      <li><strong>Type:</strong> {property_data.get('propertyType', 'N/A')}</li>
+                      <li><strong>Transaction:</strong> {property_data.get('transactionStatus', 'N/A')}</li>
+                      <li><strong>Sale Price:</strong> {formatted_price}</li>
+                      <li><strong>Lease Price:</strong> {formatted_lease_price}</li>
+                      <li><strong>Submitted By:</strong> {submitter_data.get('firstName', '')} {submitter_data.get('lastName', '')} ({submitter_data.get('email', 'N/A')})</li>
+                      <li><strong>Date:</strong> {formatted_date}</li>
+                    </ul>
+                    <p><a href="{property_url}">View Property</a></p>
+                    """
+                }
 
             email_result = resend.Emails.send(params)
             print(f"✅ Property creation email sent via Resend: {email_result}")
