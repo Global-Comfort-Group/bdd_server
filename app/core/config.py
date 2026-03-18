@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     RESEND_API_KEY: Optional[str] = None
     NOTIFICATION_EMAIL: Optional[str] = None
     RESEND_TEMPLATE_ID: Optional[str] = None
+    RESEND_NOTIFY_TEMPLATE_ID: Optional[str] = None
     FRONTEND_URL: str = "https://bdd.hotelsogo-ai.com"
 
     # Project info
