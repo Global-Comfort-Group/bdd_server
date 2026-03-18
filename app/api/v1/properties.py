@@ -22,6 +22,7 @@ from app.services.workflow import WorkflowService
 from app.services.file_storage import FileStorageService
 from app.services.oss_service import get_oss_service
 from app.api.v1.auth import get_current_user
+from app.core.config import settings
 
 
 def _serialize_attachment_with_signed_url(att) -> dict:
@@ -674,5 +675,108 @@ async def assign_reviewer(
     
     if not property_obj:
         raise HTTPException(status_code=404, detail="Property or reviewer not found")
-    
+
     return property_obj
+
+
+@router.post("/{property_id}/notify-submitter")
+async def notify_submitter(
+    property_id: int,
+    payload: dict,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Send an email notification to the property submitter (ADMIN and BDD_USER only)."""
+    if current_user.role.value not in ("ADMIN", "BDD_USER"):
+        raise HTTPException(status_code=403, detail="Not authorized to notify submitters")
+
+    # Fetch property with submitter
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(Property).options(selectinload(Property.submitted_by)).where(Property.id == property_id)
+    )
+    property_obj = result.scalar_one_or_none()
+    if not property_obj:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    submitter = property_obj.submitted_by
+    if not submitter:
+        raise HTTPException(status_code=404, detail="Submitter not found")
+
+    reason = payload.get("reason", "other")
+    message = payload.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    # Reason label map
+    reason_labels = {
+        "duplicate": "Duplicate Property",
+        "invalid": "Invalid Submission",
+        "missing_documents": "Missing Documents",
+        "other": "Other",
+    }
+    reason_label = reason_labels.get(reason, reason.replace("_", " ").title())
+
+    try:
+        import resend
+        resend.api_key = settings.RESEND_API_KEY
+
+        sender_name = f"{current_user.first_name} {current_user.last_name}".strip() or "BDD Team"
+        submitter_name = f"{submitter.first_name} {submitter.last_name}".strip() or submitter.email
+
+        notify_template_id = getattr(settings, "RESEND_NOTIFY_TEMPLATE_ID", None)
+
+        if notify_template_id:
+            params = {
+                "from": "BDD Property Tracker <noreply@hotelsogo-ai.com>",
+                "to": [submitter.email],
+                "subject": f"Notification regarding your property submission: {property_obj.name}",
+                "template_id": notify_template_id,
+                "variables": [{
+                    "email": submitter.email,
+                    "substitutions": [
+                        {"var": "submitter_name",  "value": submitter_name},
+                        {"var": "property_name",   "value": property_obj.name or "N/A"},
+                        {"var": "property_id",     "value": str(property_obj.id)},
+                        {"var": "reason",          "value": reason_label},
+                        {"var": "message",         "value": message},
+                        {"var": "sender_name",     "value": sender_name},
+                        {"var": "property_url",    "value": f"{settings.FRONTEND_URL}/property/{property_obj.id}"},
+                    ]
+                }]
+            }
+        else:
+            html_body = f"""
+            <!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:20px;">
+            <div style="background:#4F46E5;color:white;padding:20px;border-radius:8px 8px 0 0;">
+              <h2 style="margin:0;">Property Submission Update</h2>
+            </div>
+            <div style="background:#f9fafb;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 8px 8px;">
+              <p>Dear {submitter_name},</p>
+              <p>We have an update regarding your property submission:</p>
+              <div style="background:white;border-radius:8px;padding:15px;margin:15px 0;border-left:4px solid #4F46E5;">
+                <p><strong>Property:</strong> {property_obj.name}</p>
+                <p><strong>Reason:</strong> {reason_label}</p>
+              </div>
+              <div style="background:white;border-radius:8px;padding:15px;margin:15px 0;">
+                <p style="margin:0;">{message}</p>
+              </div>
+              <p>If you have questions, please reply to this email or contact your BDD representative.</p>
+              <p>Regards,<br><strong>{sender_name}</strong><br>BDD Property Tracker Team</p>
+            </div>
+            </body></html>
+            """
+            params = {
+                "from": "BDD Property Tracker <noreply@hotelsogo-ai.com>",
+                "to": [submitter.email],
+                "subject": f"Notification regarding your property submission: {property_obj.name}",
+                "html": html_body,
+            }
+
+        result = resend.Emails.send(params)
+        print(f"Submitter notification sent to {submitter.email}: {result}")
+        return {"success": True, "sent_to": submitter.email, "relayed": False}
+
+    except Exception as e:
+        print(f"Failed to send submitter notification: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
