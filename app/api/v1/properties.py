@@ -732,18 +732,15 @@ async def notify_submitter(
                 "to": [submitter.email],
                 "subject": f"Notification regarding your property submission: {property_obj.name}",
                 "template_id": notify_template_id,
-                "variables": [{
-                    "email": submitter.email,
-                    "substitutions": [
-                        {"var": "submitter_name",  "value": submitter_name},
-                        {"var": "property_name",   "value": property_obj.name or "N/A"},
-                        {"var": "property_id",     "value": str(property_obj.id)},
-                        {"var": "reason",          "value": reason_label},
-                        {"var": "message",         "value": message},
-                        {"var": "sender_name",     "value": sender_name},
-                        {"var": "property_url",    "value": f"{settings.FRONTEND_URL}/property/{property_obj.id}"},
-                    ]
-                }]
+                "variables": {
+                    "submitter_name": submitter_name,
+                    "property_name":  property_obj.name or "N/A",
+                    "property_id":    str(property_obj.id),
+                    "reason":         reason_label,
+                    "message":        message,
+                    "sender_name":    sender_name,
+                    "property_url":   f"{settings.FRONTEND_URL}/property/{property_obj.id}",
+                }
             }
         else:
             html_body = f"""
