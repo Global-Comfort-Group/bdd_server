@@ -172,29 +172,26 @@ class EmailService:
             template_id = getattr(settings, 'RESEND_TEMPLATE_ID', None)
 
             if template_id:
-                # Use Resend template with variables
+                # Use Resend template with variables (flat dict — Resend format)
                 params = {
                     "from": "BDD Property Tracker <noreply@hotelsogo-ai.com>",
                     "to": [settings.NOTIFICATION_EMAIL],
                     "subject": f"New Property Submission: {property_data.get('name', 'Unknown')}",
                     "template_id": template_id,
-                    "variables": [{
-                        "email": settings.NOTIFICATION_EMAIL,
-                        "substitutions": [
-                            {"var": "property_name",      "value": property_data.get('name', 'N/A')},
-                            {"var": "property_id",        "value": str(property_id)},
-                            {"var": "address",            "value": property_data.get('address', 'N/A')},
-                            {"var": "property_type",      "value": property_data.get('propertyType', 'N/A')},
-                            {"var": "transaction_status", "value": property_data.get('transactionStatus', 'N/A')},
-                            {"var": "sale_price",         "value": formatted_price},
-                            {"var": "lease_price",        "value": formatted_lease_price},
-                            {"var": "submitter_name",     "value": f"{submitter_data.get('firstName', '')} {submitter_data.get('lastName', '')}".strip()},
-                            {"var": "submitter_email",    "value": submitter_data.get('email', 'N/A')},
-                            {"var": "company",            "value": submitter_data.get('company', '')},
-                            {"var": "submitted_date",     "value": formatted_date},
-                            {"var": "property_url",       "value": property_url},
-                        ]
-                    }]
+                    "variables": {
+                        "property_name":      property_data.get('name', 'N/A'),
+                        "property_id":        str(property_id),
+                        "address":            property_data.get('address', 'N/A'),
+                        "property_type":      property_data.get('propertyType', 'N/A'),
+                        "transaction_status": property_data.get('transactionStatus', 'N/A'),
+                        "sale_price":         formatted_price,
+                        "lease_price":        formatted_lease_price,
+                        "submitter_name":     f"{submitter_data.get('firstName', '')} {submitter_data.get('lastName', '')}".strip(),
+                        "submitter_email":    submitter_data.get('email', 'N/A'),
+                        "company":            submitter_data.get('company', ''),
+                        "submitted_date":     formatted_date,
+                        "property_url":       property_url,
+                    }
                 }
             else:
                 # Fallback: plain inline HTML (no template configured)
