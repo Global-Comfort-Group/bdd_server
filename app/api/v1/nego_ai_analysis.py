@@ -1,11 +1,12 @@
 import io
 import csv
 import json
+from datetime import datetime
 from typing import Optional, List
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth import get_current_user
@@ -13,7 +14,9 @@ from app.core.config import settings
 from app.core.database import get_async_session
 from app.models.negotiation_chronicle import NegotiationChronicleAttachment
 from app.models.nego_table import NegoTable
+from app.models.property import Property
 from app.models.user import User
+from app.schemas.negotiation_chronicle import NegotiationChronicleAttachment as NegotiationChronicleAttachmentSchema
 from app.services.file_storage import file_storage_service
 from sqlalchemy import select
 
@@ -58,6 +61,37 @@ class AIAnalysisResult(BaseModel):
 class UploadAnalysisResponse(BaseModel):
     attachment_id: int
     ai_result: AIAnalysisResult
+
+
+# New comparison schema
+
+class NegotiationItem(BaseModel):
+    title: str
+    bdd_offer: str = ""
+    client_offer: str = ""
+    status: str = "negotiating"  # "agreed" | "negotiating"
+    agreed_date: Optional[str] = None
+    final_value: Optional[str] = None
+    notes: Optional[str] = None
+
+    @field_validator('title', 'bdd_offer', 'client_offer', mode='before')
+    @classmethod
+    def coerce_none_to_str(cls, v: object) -> str:
+        return "" if v is None else str(v)
+
+
+class AIComparisonResult(BaseModel):
+    useful: bool
+    reason: Optional[str] = None
+    overall_status: Optional[str] = None
+    summary: Optional[str] = None
+    negotiation_items: List[NegotiationItem] = []
+
+
+class UploadForPropertyResponse(BaseModel):
+    attachment_id: int
+    ai_result: AIComparisonResult
+    nego_table_id: int
 
 
 # --------------------------------------------------------------------------- #
@@ -212,13 +246,103 @@ offer/counter-offer, loan rejections, lease condition changes, key meetings, agr
 """
 
 
+_COMPARISON_SYSTEM_INSTRUCTION = (
+    "You are a real estate negotiation analyst specialising in commercial property deals "
+    "in the Philippines and Southeast Asia. "
+    "Your job is to analyse spreadsheet data and extract a per-item BDD Employee vs Client comparison. "
+    "Always respond with valid JSON only — no markdown, no explanation, just the JSON object."
+)
+
+_COMPARISON_PROMPT_TEMPLATE = """\
+You are analyzing a real estate negotiation document between a broker/agent (BDD Employee) and the client (buyer/lessee).
+
+SPREADSHEET CONTENT:
+{sheet_text}
+
+Extract a per-item comparison for ALL negotiated topics (Costing, Payment Method, Payment Schedule, \
+Lease Term, Security Deposit, Advance Rent, Escalation, Orientation, etc.).
+
+Return a JSON object with this exact schema:
+{{
+  "useful": boolean,
+  "reason": "string (only if useful=false — explain why the file is not negotiation-related)",
+  "overall_status": "string (e.g. 'Mostly agreed, cost still negotiating')",
+  "summary": "string (optional brief summary)",
+  "negotiation_items": [
+    {{
+      "title": "string — short name of the negotiation topic (e.g. 'Costing', 'Payment Method')",
+      "bdd_offer": "string — the broker/BDD employee's position or offer",
+      "client_offer": "string — the client's counter-offer or position",
+      "status": "agreed | negotiating",
+      "agreed_date": "string or null — date when they agreed (only if status is 'agreed')",
+      "final_value": "string or null — what they ultimately agreed on (if agreed)",
+      "notes": "string or null — any important context"
+    }}
+  ]
+}}
+
+Rules:
+- Set useful=false if the file contains no negotiation-related data. Provide a clear reason.
+- Set useful=true if you can extract any meaningful negotiation data.
+- agreed_date is ONLY non-null when both sides have mutually agreed on that item.
+- status must be exactly "agreed" or "negotiating".
+- Extract ALL negotiated topics you can find — do not skip any.
+- All monetary values must preserve their original currency and formatting.
+- Omit optional fields (final_value, notes) if there is no data for them.
+- negotiation_items must be a list — never null or omitted.
+"""
+
+
+async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparisonResult:
+    """Call Gemini REST API with the comparison prompt and return parsed AIComparisonResult."""
+    import httpx
+
+    gemini_url = (
+        "https://generativelanguage.googleapis.com/v1beta/models"
+        f"/gemini-2.5-flash:generateContent?key={api_key}"
+    )
+    payload = {
+        "system_instruction": {"parts": [{"text": _COMPARISON_SYSTEM_INSTRUCTION}]},
+        "contents": [
+            {"parts": [{"text": _COMPARISON_PROMPT_TEMPLATE.format(sheet_text=sheet_text)}]}
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 65536,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=300.0) as http_client:
+        gemini_response = await http_client.post(gemini_url, json=payload)
+
+    if gemini_response.status_code != 200:
+        print(f"💥 Gemini API error {gemini_response.status_code}: {gemini_response.text[:500]}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Gemini API error {gemini_response.status_code}: {gemini_response.text[:300]}",
+        )
+
+    gemini_data = gemini_response.json()
+    candidate = gemini_data["candidates"][0]
+    finish_reason = candidate.get("finishReason", "STOP")
+    if finish_reason == "MAX_TOKENS":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AI response was truncated (output token limit hit). Please try with a smaller file.",
+        )
+    result_text = candidate["content"]["parts"][0]["text"]
+    result_dict = json.loads(result_text)
+    return AIComparisonResult(**result_dict)
+
+
 async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
     """Call Gemini REST API and return parsed AIAnalysisResult."""
     import httpx
 
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
-        f"/gemini-2.0-flash:generateContent?key={api_key}"
+        f"/gemini-2.5-flash:generateContent?key={api_key}"
     )
     payload = {
         "system_instruction": {"parts": [{"text": _SYSTEM_INSTRUCTION}]},
@@ -228,10 +352,11 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
         "generationConfig": {
             "temperature": 0.1,
             "responseMimeType": "application/json",
+            "maxOutputTokens": 65536,
         },
     }
 
-    async with httpx.AsyncClient(timeout=90.0) as http_client:
+    async with httpx.AsyncClient(timeout=300.0) as http_client:
         gemini_response = await http_client.post(gemini_url, json=payload)
 
     if gemini_response.status_code != 200:
@@ -241,7 +366,14 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
         )
 
     gemini_data = gemini_response.json()
-    result_text = gemini_data["candidates"][0]["content"]["parts"][0]["text"]
+    candidate = gemini_data["candidates"][0]
+    finish_reason = candidate.get("finishReason", "STOP")
+    if finish_reason == "MAX_TOKENS":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AI response was truncated (output token limit hit). Please try with a smaller file.",
+        )
+    result_text = candidate["content"]["parts"][0]["text"]
     result_dict = json.loads(result_text)
     return AIAnalysisResult(**result_dict)
 
@@ -407,3 +539,179 @@ async def upload_and_analyze(
         attachment_id=attachment.id,
         ai_result=ai_result,
     )
+
+
+@router.post("/upload-for-property/{property_id}", response_model=UploadForPropertyResponse)
+async def upload_for_property(
+    property_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upload a negotiation file for a property. Auto-creates a NegoTable if one doesn't exist.
+    Runs Gemini AI comparison analysis (BDD Employee vs Client per item) and saves to DB.
+    Only BDD_USER (assigned reviewer) and ADMIN may upload.
+    """
+    from app.models.nego_table import NegoTableStatus
+
+    api_key = settings.GOOGLE_GEMINI_API_KEY
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI analysis is not configured on this server (missing GOOGLE_GEMINI_API_KEY).",
+        )
+
+    filename = file.filename or ""
+    lower = filename.lower()
+    if not any(lower.endswith(ext) for ext in (".xlsx", ".xls", ".csv")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file type. Please upload .xlsx, .xls, or .csv",
+        )
+
+    content = await file.read()
+
+    # Parse spreadsheet to text
+    try:
+        sheet_text = _file_to_text(content, filename)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not read file: {exc}",
+        )
+
+    if not sheet_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded file appears to be empty.",
+        )
+
+    # Call Gemini AI with comparison prompt first — before touching the DB
+    try:
+        ai_result = await _call_gemini_comparison(sheet_text, api_key)
+    except HTTPException:
+        raise  # let 502/503 from Gemini propagate with its real detail
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to parse AI response: {exc}",
+        )
+    except Exception as exc:
+        print(f"💥 Gemini comparison error: {type(exc).__name__}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"AI analysis failed: {type(exc).__name__}: {exc}",
+        )
+
+    # If Gemini says the file is not negotiation-related, return early — nothing is saved
+    if not ai_result.useful:
+        print(f"⚠️  File '{filename}' rejected by AI for property {property_id}: {ai_result.reason}")
+        return UploadForPropertyResponse(
+            attachment_id=-1,
+            ai_result=ai_result,
+            nego_table_id=-1,
+        )
+
+    # Get or create NegoTable for this property (only reached when file is useful)
+    result = await db.execute(select(NegoTable).where(NegoTable.property_id == property_id))
+    nego_table = result.scalar_one_or_none()
+    if not nego_table:
+        # Load property to seed required NOT NULL fields
+        prop_result = await db.execute(select(Property).where(Property.id == property_id))
+        prop = prop_result.scalar_one_or_none()
+        prop_name = prop.name if prop else "Unknown"
+        prop_address = prop.address if prop else "Unknown"
+        prop_type = str(prop.property_type.value) if prop else "Unknown"
+        prop_lot_area = float(prop.lot_area) if prop else 0.0
+
+        nego_table = NegoTable(
+            property_id=property_id,
+            status=NegoTableStatus.ACTIVE,
+            created_by_id=current_user.id,
+            referred_date=datetime.utcnow(),
+            source_origin="Upload",
+            original_property_name=prop_name,
+            current_property_name=prop_name,
+            original_location=prop_address,
+            current_location=prop_address,
+            original_property_type=prop_type,
+            current_property_type=prop_type,
+            original_lot_area=prop_lot_area,
+            current_lot_area=prop_lot_area,
+        )
+        db.add(nego_table)
+        await db.commit()
+        await db.refresh(nego_table)
+        print(f"✅ Auto-created NegoTable {nego_table.id} for property {property_id}")
+
+    # Replace existing attachments — keep only the latest per NegoTable
+    old_attachments_result = await db.execute(
+        select(NegotiationChronicleAttachment).where(
+            NegotiationChronicleAttachment.nego_table_id == nego_table.id
+        )
+    )
+    for old in old_attachments_result.scalars().all():
+        await db.delete(old)
+    await db.commit()
+    print(f"🗑️  Cleared old attachments for nego table {nego_table.id}")
+
+    # Upload file to OSS storage
+    await file.seek(0)
+    try:
+        upload_result = await file_storage_service.save_file(file, subfolder="negotiation_chronicles")
+        file_url = upload_result["secure_url"]
+    except Exception as exc:
+        print(f"⚠️  OSS upload failed, storing without file URL: {exc}")
+        file_url = ""
+
+    # Persist attachment with ai_result
+    attachment = NegotiationChronicleAttachment(
+        nego_table_id=nego_table.id,
+        filename=filename,
+        file_url=file_url,
+        file_type=lower.rsplit(".", 1)[-1],
+        file_size=len(content),
+        parsed_data=[],
+        ai_result=ai_result.model_dump(),
+        uploaded_by=current_user.id,
+    )
+    db.add(attachment)
+    await db.commit()
+    await db.refresh(attachment)
+
+    print(f"✅ Saved AI comparison attachment {attachment.id} for property {property_id} (nego table {nego_table.id})")
+
+    return UploadForPropertyResponse(
+        attachment_id=attachment.id,
+        ai_result=ai_result,
+        nego_table_id=nego_table.id,
+    )
+
+
+@router.get("/attachments-for-property/{property_id}", response_model=List[NegotiationChronicleAttachmentSchema])
+async def get_attachments_for_property(
+    property_id: int,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get all negotiation attachments for a property directly by property_id.
+    Bypasses the in-memory nego_tables_simple router — queries the real DB.
+    Used by the property detail page on every load/refresh.
+    """
+    # Find NegoTable for this property in the DB
+    result = await db.execute(select(NegoTable).where(NegoTable.property_id == property_id))
+    nego_table = result.scalar_one_or_none()
+    if not nego_table:
+        return []
+
+    # Return all attachments ordered newest first
+    attachments_result = await db.execute(
+        select(NegotiationChronicleAttachment)
+        .where(NegotiationChronicleAttachment.nego_table_id == nego_table.id)
+        .order_by(NegotiationChronicleAttachment.created_at.desc())
+    )
+    return attachments_result.scalars().all()

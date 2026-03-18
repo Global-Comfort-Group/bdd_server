@@ -478,11 +478,16 @@ async def upload_avatar(
     from app.services.file_storage import FileStorageService
     
     try:
-        # Validate file type
-        if not file.content_type or not file.content_type.startswith('image/'):
+        # Validate file type — check content-type OR extension (some browsers omit content-type for WebP)
+        import os as _os
+        _ext = _os.path.splitext(file.filename or '')[1].lower()
+        _image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif'}
+        _is_image_type = file.content_type and file.content_type.startswith('image/')
+        _is_image_ext = _ext in _image_extensions
+        if not (_is_image_type or _is_image_ext):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File must be an image"
+                detail="File must be an image (JPEG, PNG, GIF, WebP)"
             )
         
         # Validate file size (5MB limit)
