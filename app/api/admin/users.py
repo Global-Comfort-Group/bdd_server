@@ -3,8 +3,8 @@ Admin Portal - User Management Endpoints
 For BDD employee management only - separate from property management portal
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
@@ -13,6 +13,8 @@ from app.models.property import Property
 from app.models.enums import UserRole, AccountStatus
 from app.schemas.user import UserRead, UserCreate, UserUpdate, UserListResponse
 from app.api.admin.admin_auth import current_admin_user, current_superuser_admin
+from app.utils.activity_logger import log_activity
+from app.models.activity_log import ActivityAction, ResourceType
 
 router = APIRouter(prefix="/users", tags=["admin-users"])
 
@@ -20,23 +22,34 @@ router = APIRouter(prefix="/users", tags=["admin-users"])
 @router.get("/", response_model=UserListResponse)
 async def list_users(
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=500),
     role: Optional[UserRole] = None,
     is_active: Optional[bool] = None,
     account_status: Optional[AccountStatus] = None,
+    search: Optional[str] = None,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(current_admin_user),
 ):
     """List all users (admin portal only)."""
     # Build query with filters
     query = select(User)
-    
+
     if role:
         query = query.where(User.role == role)
     if is_active is not None:
         query = query.where(User.is_active == is_active)
     if account_status is not None:
         query = query.where(User.account_status == account_status)
+    if search:
+        term = f"%{search}%"
+        query = query.where(
+            or_(
+                User.first_name.ilike(term),
+                User.last_name.ilike(term),
+                User.email.ilike(term),
+                (User.first_name + " " + User.last_name).ilike(term),
+            )
+        )
     
     # Get total count before pagination
     count_query = select(func.count()).select_from(query.subquery())
@@ -60,6 +73,7 @@ async def list_users(
 @router.post("/", response_model=UserRead)
 async def create_user(
     user_data: UserCreate,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(current_admin_user),
 ):
@@ -95,7 +109,20 @@ async def create_user(
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
-    
+
+    try:
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            action=ActivityAction.CREATE,
+            resource_type=ResourceType.USER,
+            resource_id=new_user.id,
+            details=f"Created user: {new_user.email} with role {new_user.role.value if new_user.role else 'unknown'}",
+            request=http_request,
+        )
+    except Exception:
+        pass
+
     return new_user
 
 
@@ -103,6 +130,7 @@ async def create_user(
 async def update_user(
     user_id: int,
     user_data: UserUpdate,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(current_admin_user),
 ):
@@ -145,19 +173,42 @@ async def update_user(
         # Explicitly update the updated_at timestamp
         from datetime import datetime
         user.updated_at = datetime.utcnow()
-        
+
         await db.commit()
         await db.refresh(user)
         logger.info(f"Successfully updated user {user_id}")
+
+        try:
+            if 'role' in update_data:
+                action = ActivityAction.ROLE_CHANGE
+                details = f"Changed role for {user.email} to {user.role.value if user.role else 'unknown'}"
+            elif 'is_active' in update_data:
+                action = ActivityAction.ACTIVATE if update_data.get('is_active') else ActivityAction.DEACTIVATE
+                details = f"{'Activated' if update_data.get('is_active') else 'Deactivated'} user: {user.email}"
+            else:
+                action = ActivityAction.UPDATE
+                details = f"Updated user profile: {user.email}"
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                action=action,
+                resource_type=ResourceType.USER,
+                resource_id=user_id,
+                details=details,
+                request=http_request,
+            )
+        except Exception:
+            pass
     else:
         logger.info(f"No changes made to user {user_id}")
-    
+
     return user
 
 
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(current_admin_user),
 ):
@@ -183,16 +234,30 @@ async def delete_user(
             detail=f"Cannot delete user with {property_count} associated properties"
         )
     
+    user_email = user.email
     await db.delete(user)
     await db.commit()
-    
+
+    try:
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            action=ActivityAction.DELETE,
+            resource_type=ResourceType.USER,
+            resource_id=user_id,
+            details=f"Deleted user: {user_email}",
+            request=http_request,
+        )
+    except Exception:
+        pass
+
     return {"message": "User deleted successfully"}
 
 
 @router.get("/pending", response_model=List[UserRead])
 async def list_pending_users(
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(current_admin_user),
 ):
@@ -214,6 +279,7 @@ async def list_pending_users(
 @router.patch("/{user_id}/approve")
 async def approve_user_account(
     user_id: int,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(current_admin_user),
 ):
@@ -234,7 +300,20 @@ async def approve_user_account(
     user.account_status = AccountStatus.APPROVED
     await db.commit()
     await db.refresh(user)
-    
+
+    try:
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            action=ActivityAction.ACTIVATE,
+            resource_type=ResourceType.USER,
+            resource_id=user_id,
+            details=f"Approved user account: {user.email}",
+            request=http_request,
+        )
+    except Exception:
+        pass
+
     return {
         "message": f"User account for {user.email} has been approved",
         "user": {
@@ -250,6 +329,7 @@ async def approve_user_account(
 @router.patch("/{user_id}/reject")
 async def reject_user_account(
     user_id: int,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(current_admin_user),
 ):
@@ -270,7 +350,20 @@ async def reject_user_account(
     user.account_status = AccountStatus.REJECTED
     await db.commit()
     await db.refresh(user)
-    
+
+    try:
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            action=ActivityAction.DEACTIVATE,
+            resource_type=ResourceType.USER,
+            resource_id=user_id,
+            details=f"Rejected user account: {user.email}",
+            request=http_request,
+        )
+    except Exception:
+        pass
+
     return {
         "message": f"User account for {user.email} has been rejected",
         "user": {

@@ -1,6 +1,6 @@
 from typing import List, Optional
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +23,8 @@ from app.services.file_storage import FileStorageService
 from app.services.oss_service import get_oss_service
 from app.api.v1.auth import get_current_user
 from app.core.config import settings
+from app.utils.activity_logger import log_activity
+from app.models.activity_log import ActivityAction, ResourceType
 
 
 def _serialize_attachment_with_signed_url(att) -> dict:
@@ -57,6 +59,7 @@ def _serialize_attachment_with_signed_url(att) -> dict:
         "uploaded_by_id": att.uploaded_by_id if hasattr(att, 'uploaded_by_id') else None,
         "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
         "uploadedAt": att.uploaded_at.isoformat() if att.uploaded_at else None,
+        "document_type": att.document_type if hasattr(att, 'document_type') else None,
     }
 
 router = APIRouter(prefix="/properties", tags=["properties"])
@@ -73,7 +76,7 @@ async def get_current_user_optional() -> Optional[User]:
 @router.get("/")
 async def list_properties(
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=2000),
     status: Optional[PropertyStatus] = None,
     property_type: Optional[PropertyType] = None,
     transaction_status: Optional[TransactionStatus] = None,
@@ -132,6 +135,8 @@ async def list_properties(
             "submitted_by_id": prop.submitted_by_id,
             "submittedById": str(prop.submitted_by_id),  # Client expects string format
             "reviewer_id": prop.reviewer_id,
+            "referred_by": prop.referred_by or "",
+            "referredBy": prop.referred_by or "",
             "created_at": prop.created_at.isoformat() if prop.created_at else None,
             "updated_at": prop.updated_at.isoformat() if prop.updated_at else None,
             "createdAt": prop.created_at.isoformat() if prop.created_at else None,  # Client format
@@ -198,21 +203,35 @@ async def list_properties(
 @router.post("/", response_model=PropertyRead)
 async def create_property(
     property_data: PropertyCreate,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
     """Create a new property."""
     service = PropertyService(db)
-    
+
     # Check if title number already exists
     existing = await service.get_property_by_title_number(property_data.title_number)
     if existing:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Property with this title number already exists"
         )
-    
-    return await service.create_property(property_data, current_user.id)
+
+    new_property = await service.create_property(property_data, current_user.id)
+    try:
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            action=ActivityAction.CREATE,
+            resource_type=ResourceType.PROPERTY,
+            resource_id=new_property.id,
+            details=f"Submitted property: {new_property.name}",
+            request=http_request,
+        )
+    except Exception:
+        pass
+    return new_property
 
 
 @router.get("/{property_id}")
@@ -323,6 +342,8 @@ async def get_property(
         "zoningClassification": property_obj.zoning_classification,
         "titleNumber": property_obj.title_number,
         "transactionStatus": str(property_obj.transaction_status.value) if property_obj.transaction_status else None,
+        "referred_by": property_obj.referred_by or "",
+        "referredBy": property_obj.referred_by or "",
         "submittedBy": submitted_by_camel,
         "submittedById": str(property_obj.submitted_by_id) if property_obj.submitted_by_id else None,
         "createdAt": property_obj.created_at.isoformat() if property_obj.created_at else None,
@@ -344,58 +365,85 @@ async def get_property(
 async def update_property(
     property_id: int,
     property_data: PropertyUpdate,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
     """Update a property. Only the submitter can edit property details."""
     service = PropertyService(db)
     property_obj = await service.get_property(property_id)
-    
+
     if not property_obj:
         raise HTTPException(status_code=404, detail="Property not found")
-    
+
     # Check permissions - only the property submitter can edit property details
     # For status updates, use the dedicated /status endpoint instead
     if property_obj.submitted_by_id != current_user.id:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Only the property submitter can edit property details. Use /status endpoint to update property status."
         )
-    
+
     # Check if title number change conflicts with existing property
-    if (property_data.title_number and 
-        property_data.title_number != property_obj.title_number):
+    if (property_data.title_number and
+            property_data.title_number != property_obj.title_number):
         existing = await service.get_property_by_title_number(property_data.title_number)
         if existing:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Property with this title number already exists"
             )
-    
+
     updated_property = await service.update_property(property_id, property_data)
+    try:
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            action=ActivityAction.UPDATE,
+            resource_type=ResourceType.PROPERTY,
+            resource_id=property_id,
+            details=f"Updated property details: {property_obj.name}",
+            request=http_request,
+        )
+    except Exception:
+        pass
     return updated_property
 
 
 @router.delete("/{property_id}")
 async def delete_property(
     property_id: int,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
     """Delete a property."""
     service = PropertyService(db)
     property_obj = await service.get_property(property_id)
-    
+
     if not property_obj:
         raise HTTPException(status_code=404, detail="Property not found")
-    
+
     # Only BDD users, admins, or property owner can delete
     if (current_user.role.value not in ["BDD_USER", "ADMIN"] and
-        property_obj.submitted_by_id != current_user.id):
+            property_obj.submitted_by_id != current_user.id):
         raise HTTPException(status_code=403, detail="Not authorized to delete this property")
-    
+
+    property_name = property_obj.name
     success = await service.delete_property(property_id)
     if success:
+        try:
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                action=ActivityAction.DELETE,
+                resource_type=ResourceType.PROPERTY,
+                resource_id=property_id,
+                details=f"Deleted property: {property_name}",
+                request=http_request,
+            )
+        except Exception:
+            pass
         return {"message": "Property deleted successfully"}
     else:
         raise HTTPException(status_code=400, detail="Failed to delete property")
@@ -405,6 +453,7 @@ async def delete_property(
 async def update_property_status(
     property_id: int,
     request: StatusUpdateRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -412,26 +461,41 @@ async def update_property_status(
     # Check if property exists and user has permission
     property_service = PropertyService(db)
     property_obj = await property_service.get_property(property_id)
-    
+
     if not property_obj:
         raise HTTPException(status_code=404, detail="Property not found")
-    
+
     # Status updates can be done by:
     # 1. ADMIN (can update any property)
     # 2. Any BDD_USER
     if current_user.role.value not in ["BDD_USER", "ADMIN"]:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Only BDD employees and admins can update property workflow status"
         )
-    
+
+    old_status = property_obj.status.value if property_obj.status else "unknown"
+
     # Use workflow service to handle status transition
     workflow_service = WorkflowService(db)
-    
+
     try:
         updated_property = await workflow_service.transition_status(
             property_id, request, current_user.id
         )
+        try:
+            new_status = request.new_status.value if hasattr(request.new_status, 'value') else str(request.new_status)
+            await log_activity(
+                db=db,
+                user_id=current_user.id,
+                action=ActivityAction.STATUS_CHANGE,
+                resource_type=ResourceType.PROPERTY,
+                resource_id=property_id,
+                details=f"Changed {property_obj.name} status: {old_status} → {new_status}",
+                request=http_request,
+            )
+        except Exception:
+            pass
         return updated_property
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -682,7 +746,9 @@ async def assign_reviewer(
 @router.post("/{property_id}/notify-submitter")
 async def notify_submitter(
     property_id: int,
-    payload: dict,
+    reason: str = Form(default="other"),
+    message: str = Form(...),
+    attachments: List[UploadFile] = File(default=[]),
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -703,8 +769,7 @@ async def notify_submitter(
     if not submitter:
         raise HTTPException(status_code=404, detail="Submitter not found")
 
-    reason = payload.get("reason", "other")
-    message = payload.get("message", "").strip()
+    message = message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
 
@@ -723,6 +788,16 @@ async def notify_submitter(
 
         sender_name = f"{current_user.first_name} {current_user.last_name}".strip() or "BDD Team"
         submitter_name = f"{submitter.first_name} {submitter.last_name}".strip() or submitter.email
+
+        # Read uploaded files and build Resend attachment list
+        email_attachments = []
+        for upload in attachments:
+            content = await upload.read()
+            if content:
+                email_attachments.append({
+                    "filename": upload.filename or "attachment",
+                    "content": list(content),
+                })
 
         notify_template_id = getattr(settings, "RESEND_NOTIFY_TEMPLATE_ID", None)
 
@@ -769,6 +844,9 @@ async def notify_submitter(
                 "subject": f"Notification regarding your property submission: {property_obj.name}",
                 "html": html_body,
             }
+
+        if email_attachments:
+            params["attachments"] = email_attachments
 
         result = resend.Emails.send(params)
         print(f"Submitter notification sent to {submitter.email}: {result}")

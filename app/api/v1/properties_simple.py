@@ -14,6 +14,8 @@ from app.services.property import PropertyService
 from app.schemas.property import PropertyCreate
 from app.models.enums import PropertyType, PropertyStatus, TransactionStatus
 from app.utils.email import EmailService
+from app.utils.activity_logger import log_activity
+from app.models.activity_log import ActivityAction, ResourceType
 from datetime import datetime
 from decimal import Decimal
 
@@ -418,6 +420,7 @@ async def upload_file_to_cloudinary(file: UploadFile, folder: str = "properties"
 
 @router.post("/")
 async def create_property(
+    http_request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_async_session),
     name: str = Form(...),
@@ -443,6 +446,7 @@ async def create_property(
     barangay: Optional[str] = Form(None),
     postal_code: Optional[str] = Form(None),
     transactionStatus: Optional[str] = Form("S"),  # Default to SALE
+    referred_by: Optional[str] = Form(None),
     images: List[UploadFile] = File(default=[]),
     attachments: List[UploadFile] = File(default=[]),
     authorization_letter: Optional[UploadFile] = File(None),
@@ -662,6 +666,7 @@ async def create_property(
             zoning_classification=zoningClassification,
             title_number=titleNumber,
             description=description or "",
+            referred_by=referred_by or None,
             transaction_status=TransactionStatus(transactionStatus) if transactionStatus else TransactionStatus.S
         )
         
@@ -703,6 +708,20 @@ async def create_property(
         # Continue anyway - at least the mock version will work
 
     print(f"✅ PROPERTY CREATED SUCCESSFULLY - DB ID: {new_property['id']}")
+
+    # Log activity
+    try:
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            action=ActivityAction.CREATE,
+            resource_type=ResourceType.PROPERTY,
+            resource_id=int(new_property['id']) if new_property.get('id') else None,
+            details=f"Submitted property: {new_property['name']}",
+            request=http_request,
+        )
+    except Exception:
+        pass
 
     # Send email notification (non-blocking)
     try:

@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.database import get_async_session
 from app.models.user import User
 from app.models.enums import UserRole, AccountStatus
-from app.utils.activity_logger import log_login
+from app.utils.activity_logger import log_login, log_logout
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -532,3 +532,22 @@ async def upload_avatar(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload avatar: {str(e)}"
         )
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Log user logout activity."""
+    try:
+        await log_logout(
+            db=db,
+            user_id=current_user.id,
+            user_email=current_user.email,
+            request=request
+        )
+    except Exception:
+        pass  # Don't fail logout if logging fails
+    return {"message": "Logged out successfully"}
