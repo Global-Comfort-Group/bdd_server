@@ -197,11 +197,17 @@ class EmailService:
 
             raw_txn = property_data.get('transactionStatus', '')
 
+            # For Lease transactions the frontend puts the monthly amount in `price`,
+            # not in a separate leasePrice field — treat formatted_price as lease price too.
+            effective_lease_price = formatted_lease_price or (formatted_price if raw_txn in ('L', 'SL') else None)
+
             # Pre-compute price stat card (3rd column of the dark stats bar)
-            if raw_txn in ('S', 'SL') and formatted_price:
+            if raw_txn == 'S' and formatted_price:
                 price_stat_td = formatted_price
-            elif raw_txn in ('L', 'SL') and formatted_lease_price:
-                price_stat_td = formatted_lease_price + ' / mo'
+            elif raw_txn == 'L' and effective_lease_price:
+                price_stat_td = effective_lease_price + ' / mo'
+            elif raw_txn == 'SL':
+                price_stat_td = formatted_price or (effective_lease_price + ' / mo' if effective_lease_price else 'TBD')
             elif raw_txn == 'JV' and formatted_price:
                 price_stat_td = formatted_price
             else:
@@ -214,10 +220,10 @@ class EmailService:
                     '<tr><td style="font-size:13px;font-weight:600;color:#16a34a;padding-bottom:4px">Sale Price</td>'
                     '<td align="right" style="font-size:20px;font-weight:900;color:#15803d;padding-bottom:4px">' + formatted_price + '</td></tr>'
                 )
-            if raw_txn in ('L', 'SL') and formatted_lease_price:
+            if raw_txn in ('L', 'SL') and effective_lease_price:
                 pricing_rows += (
                     '<tr><td style="font-size:13px;font-weight:600;color:#16a34a;padding-top:8px">Lease Price / mo</td>'
-                    '<td align="right" style="font-size:20px;font-weight:900;color:#15803d;padding-top:8px">' + formatted_lease_price + '</td></tr>'
+                    '<td align="right" style="font-size:20px;font-weight:900;color:#15803d;padding-top:8px">' + effective_lease_price + '</td></tr>'
                 )
             if raw_txn == 'JV' and formatted_price:
                 pricing_rows += (
