@@ -818,26 +818,197 @@ async def notify_submitter(
                 }
             }
         else:
-            html_body = f"""
-            <!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:20px;">
-            <div style="background:#4F46E5;color:white;padding:20px;border-radius:8px 8px 0 0;">
-              <h2 style="margin:0;">Property Submission Update</h2>
-            </div>
-            <div style="background:#f9fafb;padding:20px;border:1px solid #e5e7eb;border-radius:0 0 8px 8px;">
-              <p>Dear {submitter_name},</p>
-              <p>We have an update regarding your property submission:</p>
-              <div style="background:white;border-radius:8px;padding:15px;margin:15px 0;border-left:4px solid #4F46E5;">
-                <p><strong>Property:</strong> {property_obj.name}</p>
-                <p><strong>Reason:</strong> {reason_label}</p>
-              </div>
-              <div style="background:white;border-radius:8px;padding:15px;margin:15px 0;">
-                <p style="margin:0;">{message}</p>
-              </div>
-              <p>If you have questions, please reply to this email or contact your BDD representative.</p>
-              <p>Regards,<br><strong>{sender_name}</strong><br>BDD Property Tracker Team</p>
-            </div>
-            </body></html>
-            """
+            html_body = f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Property Submission Update — BDD Property Tracker</title>
+</head>
+<body style="margin:0;padding:0;background-color:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+
+  <!-- Preheader -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    Update on your property submission: {property_obj.name} — {reason_label}
+  </div>
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+  </div>
+
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color:#F1F5F9;margin:0;padding:0;">
+    <tr>
+      <td style="padding:32px 16px;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:600px;margin:0 auto;">
+
+          <!-- HEADER -->
+          <tr>
+            <td style="border-radius:16px 16px 0 0;background:linear-gradient(135deg,#A31520 0%,#CC1F2C 60%,#E8374A 100%);padding:0;overflow:hidden;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="padding:48px 40px 40px 40px;text-align:center;">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto 20px auto;">
+                      <tr>
+                        <td style="width:64px;height:64px;background-color:rgba(255,255,255,0.15);border-radius:16px;text-align:center;vertical-align:middle;font-size:32px;line-height:64px;">
+                          &#127968;
+                        </td>
+                      </tr>
+                    </table>
+                    <h1 style="margin:0 0 8px 0;font-size:26px;font-weight:700;color:#FFFFFF;letter-spacing:-0.5px;line-height:1.2;">
+                      Property Submission Update
+                    </h1>
+                    <p style="margin:0;font-size:13px;font-weight:500;color:rgba(255,220,220,0.9);letter-spacing:1.5px;text-transform:uppercase;">
+                      GCGC BDD Property Tracker
+                    </p>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:20px auto 0 auto;">
+                      <tr>
+                        <td style="width:40px;height:3px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.5),transparent);border-radius:2px;"></td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- PROPERTY + REASON BADGE -->
+          <tr>
+            <td style="background-color:#FFFFFF;padding:0;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="padding:28px 40px 24px 40px;text-align:center;border-bottom:1px solid #F1F5F9;">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto 16px auto;">
+                      <tr>
+                        <td style="background:linear-gradient(135deg,#A31520,#CC1F2C);border-radius:100px;padding:6px 18px;">
+                          <span style="font-size:11px;font-weight:700;color:#FFFFFF;letter-spacing:1.5px;text-transform:uppercase;white-space:nowrap;">
+                            &#9679; {reason_label}
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+                    <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#1E293B;letter-spacing:-0.3px;line-height:1.3;">
+                      {property_obj.name}
+                    </h2>
+                    <p style="margin:0;font-size:13px;color:#94A3B8;font-weight:500;">
+                      Property ID: <span style="color:#CC1F2C;font-weight:600;">#{property_obj.id}</span>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- GREETING + MESSAGE -->
+          <tr>
+            <td style="background-color:#FFFFFF;padding:0;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="padding:28px 40px;">
+                    <p style="margin:0 0 6px 0;font-size:11px;font-weight:700;color:#CC1F2C;letter-spacing:1.5px;text-transform:uppercase;">
+                      Message from BDD Team
+                    </p>
+                    <p style="margin:0 0 20px 0;font-size:15px;color:#475569;line-height:1.6;">
+                      Dear <strong style="color:#1E293B;">{submitter_name}</strong>,
+                    </p>
+                    <!-- Message box -->
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                      <tr>
+                        <td style="background-color:#FFF5F5;border:1px solid #FECACA;border-left:4px solid #CC1F2C;border-radius:8px;padding:18px 20px;">
+                          <p style="margin:0;font-size:14px;color:#1E293B;line-height:1.7;white-space:pre-line;">{message}</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- PROPERTY INFO CARD -->
+          <tr>
+            <td style="background-color:#FFFFFF;padding:0;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="padding:0 40px 28px 40px;">
+                    <p style="margin:0 0 14px 0;font-size:11px;font-weight:700;color:#CC1F2C;letter-spacing:1.5px;text-transform:uppercase;">
+                      Property Details
+                    </p>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border:1px solid #E2E8F0;border-radius:12px;overflow:hidden;">
+                      <tr>
+                        <td style="width:50%;padding:14px 18px;background-color:#F8FAFC;border-bottom:1px solid #E2E8F0;border-right:1px solid #E2E8F0;vertical-align:top;">
+                          <p style="margin:0 0 3px 0;font-size:10px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;">Property</p>
+                          <p style="margin:0;font-size:14px;font-weight:600;color:#1E293B;">{property_obj.name}</p>
+                        </td>
+                        <td style="width:50%;padding:14px 18px;background-color:#F8FAFC;border-bottom:1px solid #E2E8F0;vertical-align:top;">
+                          <p style="margin:0 0 3px 0;font-size:10px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;">Reason</p>
+                          <p style="margin:0;font-size:14px;font-weight:600;color:#CC1F2C;">{reason_label}</p>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colspan="2" style="padding:14px 18px;background-color:#FFFFFF;vertical-align:top;">
+                          <p style="margin:0 0 3px 0;font-size:10px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;">Sent by</p>
+                          <p style="margin:0;font-size:14px;font-weight:500;color:#1E293B;">{sender_name} &mdash; BDD Property Tracker Team</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- CTA BUTTON -->
+          <tr>
+            <td style="background-color:#FFFFFF;padding:0 40px 40px 40px;text-align:center;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+                <tr>
+                  <td style="border-radius:10px;background:linear-gradient(135deg,#A31520 0%,#CC1F2C 50%,#E8374A 100%);box-shadow:0 4px 15px rgba(204,31,44,0.4);">
+                    <a href="{settings.FRONTEND_URL}/property/{property_obj.id}" target="_blank" style="display:inline-block;padding:15px 36px;font-size:15px;font-weight:700;color:#FFFFFF;text-decoration:none;letter-spacing:0.3px;white-space:nowrap;line-height:1.4;">
+                      View Property Details &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:16px 0 0 0;font-size:12px;color:#94A3B8;">
+                Or copy this link:
+                <a href="{settings.FRONTEND_URL}/property/{property_obj.id}" style="color:#CC1F2C;text-decoration:none;word-break:break-all;">{settings.FRONTEND_URL}/property/{property_obj.id}</a>
+              </p>
+            </td>
+          </tr>
+
+          <!-- DIVIDER -->
+          <tr>
+            <td style="background-color:#FFFFFF;padding:0 40px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="height:1px;background:linear-gradient(90deg,transparent,#E2E8F0,transparent);"></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- FOOTER -->
+          <tr>
+            <td style="background-color:#FFFFFF;border-radius:0 0 16px 16px;padding:28px 40px;text-align:center;">
+              <p style="margin:0 0 6px 0;font-size:12px;color:#94A3B8;line-height:1.6;">
+                If you have questions, please reply to this email or contact your BDD representative.
+              </p>
+              <p style="margin:0;font-size:12px;color:#CBD5E1;line-height:1.6;">
+                &copy; 2026 GCGC BDD Property Tracker. This is an automated notification.
+              </p>
+            </td>
+          </tr>
+
+          <tr><td style="height:32px;"></td></tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>"""
             params = {
                 "from": "BDD Property Tracker <noreply@hotelsogo-ai.com>",
                 "to": [submitter.email],
