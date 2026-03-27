@@ -1,6 +1,6 @@
 from typing import List, Optional
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -746,7 +746,9 @@ async def assign_reviewer(
 @router.post("/{property_id}/notify-submitter")
 async def notify_submitter(
     property_id: int,
-    payload: dict,
+    reason: str = Form(default="other"),
+    message: str = Form(...),
+    attachments: List[UploadFile] = File(default=[]),
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -767,8 +769,7 @@ async def notify_submitter(
     if not submitter:
         raise HTTPException(status_code=404, detail="Submitter not found")
 
-    reason = payload.get("reason", "other")
-    message = payload.get("message", "").strip()
+    message = message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
 
@@ -787,6 +788,16 @@ async def notify_submitter(
 
         sender_name = f"{current_user.first_name} {current_user.last_name}".strip() or "BDD Team"
         submitter_name = f"{submitter.first_name} {submitter.last_name}".strip() or submitter.email
+
+        # Read uploaded files and build Resend attachment list
+        email_attachments = []
+        for upload in attachments:
+            content = await upload.read()
+            if content:
+                email_attachments.append({
+                    "filename": upload.filename or "attachment",
+                    "content": list(content),
+                })
 
         notify_template_id = getattr(settings, "RESEND_NOTIFY_TEMPLATE_ID", None)
 
@@ -833,6 +844,9 @@ async def notify_submitter(
                 "subject": f"Notification regarding your property submission: {property_obj.name}",
                 "html": html_body,
             }
+
+        if email_attachments:
+            params["attachments"] = email_attachments
 
         result = resend.Emails.send(params)
         print(f"Submitter notification sent to {submitter.email}: {result}")
