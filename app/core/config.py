@@ -32,7 +32,7 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
 
     # File Upload
-    MAX_FILE_SIZE: int = 10485760  # 10MB
+    MAX_FILE_SIZE: int = 367001600  # 350MB
     UPLOAD_DIRECTORY: str = "./uploads"
 
     # Cloudinary (for file uploads - legacy)

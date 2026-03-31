@@ -196,6 +196,7 @@ class EmailService:
             address = property_data.get('address', 'N/A')
 
             raw_txn = property_data.get('transactionStatus', '')
+            print(f"📧 EMAIL DEBUG — raw_txn={raw_txn!r} price_val={price_val!r} lease_price_val={lease_price_val!r} formatted_price={formatted_price!r} formatted_lease_price={formatted_lease_price!r}")
 
             # For Lease transactions the frontend puts the monthly amount in `price`,
             # not in a separate leasePrice field — treat formatted_price as lease price too.

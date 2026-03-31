@@ -131,6 +131,7 @@ class PropertyAttachment(Base):
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For images
     height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For images
+    document_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # e.g. 'pby_ffs', 'due_diligence', or None for general
     uploaded_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 

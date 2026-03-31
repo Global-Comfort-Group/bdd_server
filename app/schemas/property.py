@@ -149,6 +149,7 @@ class PropertyAttachmentBase(BaseModel):
     mime_type: str
     width: Optional[int] = None  # For images
     height: Optional[int] = None  # For images
+    document_type: Optional[str] = None  # 'pby_ffs', 'due_diligence', or None for general
 
 
 class PropertyAttachmentCreate(PropertyAttachmentBase):
