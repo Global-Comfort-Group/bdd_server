@@ -425,14 +425,15 @@ async def create_property(
     db: AsyncSession = Depends(get_async_session),
     name: str = Form(...),
     address: str = Form(...),
-    lotArea: int = Form(...),
+    lotArea: float = Form(...),
     propertyType: str = Form(...),
-    price: int = Form(...),
+    price: float = Form(...),
+    leasePrice: Optional[float] = Form(None),
     currency: str = Form("PHP"),
     zoningClassification: str = Form(...),
     titleNumber: str = Form(...),
     description: str = Form(""),
-    buildingArea: Optional[int] = Form(None),
+    buildingArea: Optional[float] = Form(None),
     floors: Optional[int] = Form(None),
     rooms: Optional[int] = Form(None),
     openParking: Optional[int] = Form(None),
@@ -577,6 +578,7 @@ async def create_property(
         "lotArea": lotArea,
         "propertyType": propertyType,
         "price": price,
+        "leasePrice": leasePrice,
         "currency": currency,
         "zoningClassification": zoningClassification,
         "titleNumber": titleNumber,
@@ -644,7 +646,7 @@ async def create_property(
     # Also save to database so it appears in All Properties page
     try:
         property_service = PropertyService(db)
-        
+
         # Create PropertyCreate schema from form data
         property_create = PropertyCreate(
             name=name,
@@ -662,6 +664,11 @@ async def create_property(
             lot_area=float(lotArea),
             property_type=PropertyType(propertyType),
             price=Decimal(str(price)),
+            lease_price=Decimal(str(leasePrice)) if leasePrice else None,
+            building_area=float(buildingArea) if buildingArea else None,
+            floors=int(floors) if floors else None,
+            parking_slots=int(openParking) if openParking else None,
+            rooms=int(rooms) if rooms else None,
             currency=currency or "PHP",
             zoning_classification=zoningClassification,
             title_number=titleNumber,
@@ -703,9 +710,15 @@ async def create_property(
             print(f"⚠️  Failed to save attachments to database: {attachment_error}")
             await db.rollback()
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"⚠️  Failed to save to database: {e}")
-        # Continue anyway - at least the mock version will work
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save property to database: {str(e)}"
+        )
 
     print(f"✅ PROPERTY CREATED SUCCESSFULLY - DB ID: {new_property['id']}")
 

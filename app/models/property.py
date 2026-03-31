@@ -44,9 +44,13 @@ class Property(Base):
     property_type: Mapped[PropertyType] = mapped_column(SQLEnum(PropertyType), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)  # Sale price or primary price
     lease_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2), nullable=True)  # Lease price for SL transactions
+    building_area: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    floors: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    parking_slots: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rooms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     currency: Mapped[str] = mapped_column(String(3), default="PHP", nullable=False)
     zoning_classification: Mapped[str] = mapped_column(String(100), nullable=False)
-    title_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    title_number: Mapped[Optional[str]] = mapped_column(String(100), unique=False, nullable=True, index=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     referred_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # Name or company that referred this property
 
@@ -131,6 +135,7 @@ class PropertyAttachment(Base):
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For images
     height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For images
+    document_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # e.g. 'pby_ffs', 'due_diligence', or None for general
     uploaded_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 

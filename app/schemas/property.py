@@ -33,9 +33,13 @@ class PropertyBase(BaseModel):
     property_type: PropertyType
     price: Decimal  # Sale price or primary price
     lease_price: Optional[Decimal] = None  # Required when transaction_status is SL
+    building_area: Optional[float] = None
+    floors: Optional[int] = None
+    parking_slots: Optional[int] = None
+    rooms: Optional[int] = None
     currency: str = "PHP"
     zoning_classification: ZoningClassification
-    title_number: str
+    title_number: Optional[str] = None
     description: Optional[str] = None
     referred_by: Optional[str] = None
     transaction_status: TransactionStatus
@@ -85,6 +89,10 @@ class PropertyUpdate(BaseModel):
     property_type: Optional[PropertyType] = None
     price: Optional[Decimal] = None
     lease_price: Optional[Decimal] = None
+    building_area: Optional[float] = None
+    floors: Optional[int] = None
+    parking_slots: Optional[int] = None
+    rooms: Optional[int] = None
     currency: Optional[str] = None
     zoning_classification: Optional[ZoningClassification] = None
     title_number: Optional[str] = None
@@ -149,6 +157,7 @@ class PropertyAttachmentBase(BaseModel):
     mime_type: str
     width: Optional[int] = None  # For images
     height: Optional[int] = None  # For images
+    document_type: Optional[str] = None  # 'pby_ffs', 'due_diligence', or None for general
 
 
 class PropertyAttachmentCreate(PropertyAttachmentBase):

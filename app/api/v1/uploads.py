@@ -1,7 +1,7 @@
 """
 File upload endpoints using Alibaba Cloud OSS
 """
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -17,28 +17,24 @@ from app.models.user import User, UserRole
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
 
+ADMIN_ONLY_DOC_TYPES = {"pby_ffs", "due_diligence"}
+
+
 @router.post("/property/{property_id}/attachment", response_model=PropertyAttachmentRead)
 async def upload_property_attachment(
     property_id: int,
     file: UploadFile = File(...),
+    document_type: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
     """
     Upload a file attachment for a property using Alibaba Cloud OSS.
-    Only the property submitter, BDD users, and admins can upload attachments.
-
-    Args:
-        property_id: ID of the property to attach file to
-        file: File to upload
-        current_user: Currently authenticated user
-        db: Database session
-
-    Returns:
-        PropertyAttachmentRead with OSS URLs
+    - General attachments: submitter, BDD users, admins
+    - pby_ffs / due_diligence: BDD users and admins only
     """
     try:
-        # Verify property exists and check permissions
+        # Verify property exists
         stmt = select(Property).where(Property.id == property_id)
         result = await db.execute(stmt)
         property_obj = result.scalar_one_or_none()
@@ -46,15 +42,23 @@ async def upload_property_attachment(
         if not property_obj:
             raise HTTPException(status_code=404, detail="Property not found")
 
-        # Permission check: Only submitter, BDD users, and admins can upload
-        if (current_user.role not in [UserRole.BDD_USER, UserRole.ADMIN] and
-            property_obj.submitted_by_id != current_user.id):
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to upload attachments to this property"
-            )
+        # Admin-only document types
+        if document_type in ADMIN_ONLY_DOC_TYPES:
+            if current_user.role not in [UserRole.BDD_USER, UserRole.ADMIN]:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Only BDD employees and admins can upload {document_type} documents"
+                )
+        else:
+            # General attachment: submitter, BDD users, admins
+            if (current_user.role not in [UserRole.BDD_USER, UserRole.ADMIN] and
+                    property_obj.submitted_by_id != current_user.id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to upload attachments to this property"
+                )
 
-        print(f"🔒 Permission granted: {current_user.email} uploading to property {property_id}")
+        print(f"🔒 Permission granted: {current_user.email} uploading to property {property_id} (type={document_type})")
 
         # Upload file to OSS
         upload_result = await file_storage_service.save_file(
@@ -75,6 +79,7 @@ async def upload_property_attachment(
             mime_type=upload_result["mime_type"],
             width=upload_result.get("width"),
             height=upload_result.get("height"),
+            document_type=document_type,
             uploaded_by_id=current_user.id
         )
 

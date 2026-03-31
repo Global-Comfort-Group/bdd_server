@@ -81,49 +81,34 @@ class DuplicateDetectionService:
     async def check_duplicates_by_criteria(
         self, criteria: DuplicateCheckRequest, threshold: float = 0.7
     ) -> List[DuplicateResult]:
-        """Check for duplicates using flexible criteria."""
+        """
+        Flag a property as duplicate if ANY of the following match an existing property:
+          - Same title number (exact, case-insensitive, ignoring punctuation)
+          - Same address (≥85% fuzzy match)
+        """
         duplicates = []
 
-        # Check title number if provided
+        # 1. Exact title number match
         if criteria.title_number:
-            exact_match = await self._check_exact_title_match(criteria.title_number)
+            exact_match = await self._check_exact_title_number(criteria.title_number)
             if exact_match:
                 duplicates.append(DuplicateResult(
                     property_id=exact_match.id,
                     similarity_score=1.0,
-                    match_reasons=["Exact title number match"],
-                    property=exact_match
+                    match_reasons=["Same title number (TCT)"],
                 ))
 
-        # Check address if provided
+        # 2. Same address (high-threshold fuzzy match ≥ 0.85)
         if criteria.address:
             address_matches = await self._check_fuzzy_address_match(
-                criteria.address, threshold
+                criteria.address, threshold=0.85
             )
             for match, score, reasons in address_matches:
                 if match.id not in [d.property_id for d in duplicates]:
                     duplicates.append(DuplicateResult(
                         property_id=match.id,
                         similarity_score=score,
-                        match_reasons=reasons,
-                        property=match
-                    ))
-
-        # Check coordinates if provided
-        if criteria.latitude and criteria.longitude:
-            location_matches = await self._check_location_proximity(
-                criteria.latitude,
-                criteria.longitude,
-                criteria.name,
-                threshold
-            )
-            for match, score, reasons in location_matches:
-                if match.id not in [d.property_id for d in duplicates]:
-                    duplicates.append(DuplicateResult(
-                        property_id=match.id,
-                        similarity_score=score,
-                        match_reasons=reasons,
-                        property=match
+                        match_reasons=["Same address"],
                     ))
 
         duplicates.sort(key=lambda x: x.similarity_score, reverse=True)
@@ -159,6 +144,31 @@ class DuplicateDetectionService:
             scores.append(location_score * 0.3)  # 30% weight
         
         return sum(scores) if scores else 0.0
+
+    async def _check_exact_title_number(self, title_number: str) -> Property:
+        """Check for exact title number match (case-insensitive, strips punctuation)."""
+        import re
+        normalized = re.sub(r'[^a-z0-9]', '', title_number.lower())
+        if not normalized or normalized in ('na', 'none', 'tbd'):
+            return None
+
+        stmt = (
+            select(Property)
+            .options(
+                selectinload(Property.submitted_by),
+                selectinload(Property.reviewer)
+            )
+        )
+        result = await self.db.execute(stmt)
+        properties = result.scalars().all()
+
+        for prop in properties:
+            if not prop.title_number:
+                continue
+            prop_normalized = re.sub(r'[^a-z0-9]', '', prop.title_number.lower())
+            if prop_normalized == normalized:
+                return prop
+        return None
 
     async def _check_exact_title_match(self, title_number: str) -> Property:
         """Check for exact title number match."""

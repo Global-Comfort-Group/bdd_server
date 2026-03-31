@@ -139,7 +139,7 @@ class ActivityLogService:
             select(ActivityLog.action, func.count(ActivityLog.id))
             .group_by(ActivityLog.action)
         )
-        actions_by_type = {str(action): count for action, count in actions_result.all()}
+        actions_by_type = {action.value: count for action, count in actions_result.all()}
         
         # Users active today
         today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)

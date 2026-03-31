@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from app.models.activity_log import ActivityAction, ResourceType
 
 
@@ -43,6 +43,27 @@ class ActivityLogFilters(BaseModel):
     date_to: Optional[datetime] = None
     limit: int = Field(default=50, le=1000)
     skip: int = Field(default=0, ge=0)
+
+    @field_validator('date_from', mode='before')
+    @classmethod
+    def parse_date_from(cls, v):
+        if v is None or isinstance(v, datetime):
+            return v
+        try:
+            # Accept "YYYY-MM-DD" or full ISO strings
+            return datetime.fromisoformat(str(v)[:10]).replace(hour=0, minute=0, second=0, microsecond=0)
+        except Exception:
+            return None
+
+    @field_validator('date_to', mode='before')
+    @classmethod
+    def parse_date_to(cls, v):
+        if v is None or isinstance(v, datetime):
+            return v
+        try:
+            return datetime.fromisoformat(str(v)[:10]).replace(hour=23, minute=59, second=59, microsecond=999999)
+        except Exception:
+            return None
 
 
 # Statistics response

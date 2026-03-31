@@ -159,8 +159,22 @@ app.include_router(
 # Add exception handlers
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 logger = logging.getLogger(__name__)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Log full 422 validation errors so we can diagnose them."""
+    errors = exc.errors()
+    print(f"❌ 422 VALIDATION ERROR on {request.method} {request.url.path}")
+    for err in errors:
+        print(f"   field={err.get('loc')} msg={err.get('msg')} type={err.get('type')}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors}
+    )
 
 
 @app.exception_handler(Exception)
