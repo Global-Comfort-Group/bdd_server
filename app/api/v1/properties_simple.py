@@ -646,7 +646,15 @@ async def create_property(
     # Also save to database so it appears in All Properties page
     try:
         property_service = PropertyService(db)
-        
+
+        # Check for duplicate title_number before attempting insert
+        existing = await property_service.get_property_by_title_number(titleNumber)
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A property with title number '{titleNumber}' already exists."
+            )
+
         # Create PropertyCreate schema from form data
         property_create = PropertyCreate(
             name=name,
@@ -710,9 +718,15 @@ async def create_property(
             print(f"⚠️  Failed to save attachments to database: {attachment_error}")
             await db.rollback()
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"⚠️  Failed to save to database: {e}")
-        # Continue anyway - at least the mock version will work
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save property to database: {str(e)}"
+        )
 
     print(f"✅ PROPERTY CREATED SUCCESSFULLY - DB ID: {new_property['id']}")
 
