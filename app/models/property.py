@@ -44,6 +44,10 @@ class Property(Base):
     property_type: Mapped[PropertyType] = mapped_column(SQLEnum(PropertyType), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)  # Sale price or primary price
     lease_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2), nullable=True)  # Lease price for SL transactions
+    building_area: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    floors: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    parking_slots: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rooms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     currency: Mapped[str] = mapped_column(String(3), default="PHP", nullable=False)
     zoning_classification: Mapped[str] = mapped_column(String(100), nullable=False)
     title_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)

@@ -33,6 +33,10 @@ class PropertyBase(BaseModel):
     property_type: PropertyType
     price: Decimal  # Sale price or primary price
     lease_price: Optional[Decimal] = None  # Required when transaction_status is SL
+    building_area: Optional[float] = None
+    floors: Optional[int] = None
+    parking_slots: Optional[int] = None
+    rooms: Optional[int] = None
     currency: str = "PHP"
     zoning_classification: ZoningClassification
     title_number: str
@@ -85,6 +89,10 @@ class PropertyUpdate(BaseModel):
     property_type: Optional[PropertyType] = None
     price: Optional[Decimal] = None
     lease_price: Optional[Decimal] = None
+    building_area: Optional[float] = None
+    floors: Optional[int] = None
+    parking_slots: Optional[int] = None
+    rooms: Optional[int] = None
     currency: Optional[str] = None
     zoning_classification: Optional[ZoningClassification] = None
     title_number: Optional[str] = None
