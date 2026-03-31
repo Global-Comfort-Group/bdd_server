@@ -384,23 +384,13 @@ async def update_property(
     if not property_obj:
         raise HTTPException(status_code=404, detail="Property not found")
 
-    # Check permissions - only the property submitter can edit property details
-    # For status updates, use the dedicated /status endpoint instead
-    if property_obj.submitted_by_id != current_user.id:
+    # Check permissions — submitter or ADMIN/BDD_USER can edit
+    if (current_user.role.value not in ["BDD_USER", "ADMIN"] and
+            property_obj.submitted_by_id != current_user.id):
         raise HTTPException(
             status_code=403,
-            detail="Only the property submitter can edit property details. Use /status endpoint to update property status."
+            detail="Only the property submitter or an admin can edit property details."
         )
-
-    # Check if title number change conflicts with existing property
-    if (property_data.title_number and
-            property_data.title_number != property_obj.title_number):
-        existing = await service.get_property_by_title_number(property_data.title_number)
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail="Property with this title number already exists"
-            )
 
     updated_property = await service.update_property(property_id, property_data)
     try:
