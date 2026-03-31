@@ -50,7 +50,7 @@ class Property(Base):
     rooms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     currency: Mapped[str] = mapped_column(String(3), default="PHP", nullable=False)
     zoning_classification: Mapped[str] = mapped_column(String(100), nullable=False)
-    title_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    title_number: Mapped[Optional[str]] = mapped_column(String(100), unique=False, nullable=True, index=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     referred_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # Name or company that referred this property
 

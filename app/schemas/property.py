@@ -39,7 +39,7 @@ class PropertyBase(BaseModel):
     rooms: Optional[int] = None
     currency: str = "PHP"
     zoning_classification: ZoningClassification
-    title_number: str
+    title_number: Optional[str] = None
     description: Optional[str] = None
     referred_by: Optional[str] = None
     transaction_status: TransactionStatus

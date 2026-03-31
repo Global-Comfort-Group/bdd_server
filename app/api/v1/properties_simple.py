@@ -647,14 +647,6 @@ async def create_property(
     try:
         property_service = PropertyService(db)
 
-        # Check for duplicate title_number before attempting insert
-        existing = await property_service.get_property_by_title_number(titleNumber)
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail=f"A property with title number '{titleNumber}' already exists."
-            )
-
         # Create PropertyCreate schema from form data
         property_create = PropertyCreate(
             name=name,
