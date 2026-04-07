@@ -188,108 +188,152 @@ def _file_to_text(content: bytes, filename: str) -> str:
 # --------------------------------------------------------------------------- #
 
 _SYSTEM_INSTRUCTION = (
-    "You are a real estate negotiation analyst specialising in commercial property deals "
+    "You are a senior real estate negotiation analyst specialising in commercial property deals "
     "in the Philippines and Southeast Asia. "
-    "Your job is to analyse spreadsheet data and extract a structured negotiation DECISION TIMELINE. "
+    "Your job is to carefully read every cell of the spreadsheet and extract a structured, "
+    "accurate negotiation DECISION TIMELINE — including whether each item is AGREED or still NEGOTIATING. "
     "Always respond with valid JSON only — no markdown, no explanation, just the JSON object."
 )
 
 _USER_PROMPT_TEMPLATE = """\
-Analyse the following spreadsheet data and extract negotiation information, \
-focusing on building a chronological DECISION TIMELINE.
+Carefully analyse the following spreadsheet data and extract ALL negotiation information, \
+focusing on building an accurate chronological DECISION TIMELINE.
 
 SPREADSHEET CONTENT:
 {sheet_text}
+
+=== HOW TO DETERMINE AGREEMENT vs NEGOTIATION ===
+
+AGREED signals (mark event_type="agreement", outcome reflects the agreed value):
+- Explicit words: "agreed", "confirmed", "accepted", "approved", "signed", "closed", "done", "OK", "✓", "checked"
+- Phrases: "both parties agreed", "mutually accepted", "finalized", "no objection", "go signal", "proceed"
+- A value that appears identical on both the BDD/broker side AND the client side with no further counter
+- A date with a confirmation note beside it
+
+STILL NEGOTIATING signals (mark event_type="offer" or "condition"):
+- Words: "counter", "pending", "TBD", "for review", "under negotiation", "awaiting", "will revert", "to confirm"
+- A value on one side with a different value on the other side (gap exists)
+- Open questions, conditions not yet accepted, items marked "subject to"
+
+OVERALL negotiationStatus rules:
+- "Fully Agreed – Deal Closed" → every main term (price, payment, lease term) is confirmed by both parties
+- "Partially Agreed – [specific items] still negotiating" → some items agreed, some not
+- "Active – Counter offer stage" → price or key terms still have an open gap
+- "Active – Awaiting client decision" → BDD has made a final offer, client has not responded
+- "Stalled – No recent activity" → last entry is old with no resolution
+- "Rejected – Deal fell through" → explicit rejection language found
+
+=== OUTPUT SCHEMA ===
 
 Return a JSON object with this exact schema:
 {{
   "useful": boolean,
   "reason": "string (only if useful=false — explain why the file is not negotiation-related)",
-  "negotiationStatus": "string (e.g. 'Active – Counter offer stage')",
+  "negotiationStatus": "string — use one of the status formats above, be specific",
   "priceComparison": {{
     "askingPrice": "string (formatted, e.g. '₱150,000/month')",
     "clientOffer": "string (formatted)",
-    "gap": "string (the difference, e.g. '₱20,000 or 13%')",
+    "gap": "string (the difference, e.g. '₱20,000 or 13%') — use 'None – agreed' if price is settled",
     "currency": "string (e.g. 'PHP', 'USD')"
   }},
-  "clientConditions": ["plain-English condition strings"],
+  "clientConditions": ["plain-English condition strings — include ALL conditions the client imposed"],
   "recentTransactions": [
     {{
       "date": "string or null (e.g. 'Feb 10, 2026')",
-      "title": "string — short 3-6 word label for this event (e.g. 'Cash Payment Agreed', \
-'Price Reduced to ₱12.5M', 'BDO Loan Declined', 'Lease Term Extended')",
-      "summary": "string — 1-3 sentences: WHO did WHAT and WHY",
+      "title": "string — short 3-6 word label (e.g. 'Cash Payment Agreed', 'Price Reduced to ₱12.5M', 'Client Rejected Offer')",
+      "summary": "string — 1-3 sentences: WHO did WHAT, the exact values involved, and WHY",
       "event_type": "one of: payment_method | price_change | offer | agreement | condition | meeting | rejection | other",
-      "outcome": "string or null — the result/next step"
+      "outcome": "string or null — the confirmed result if agreed, or the next step if still open"
     }}
   ],
-  "keyNotes": ["important flag / risk / observation strings"],
+  "keyNotes": ["important flags, risks, or observations — include the overall deal status as the first note"],
   "rawExtracted": [
     {{ "header": "label/field name", "value": "the value" }}
   ]
 }}
 
-Rules:
-- Set useful=false if the file contains no negotiation-related data (e.g. user list, \
-financial report, unrelated data). Provide a clear reason.
-- Set useful=true if you can extract any meaningful negotiation data.
+=== RULES ===
+- Read EVERY row and column — do not skip data even if it appears peripheral.
+- Set useful=false ONLY if the file has zero negotiation content (e.g. pure inventory list, user data).
 - recentTransactions MUST be sorted chronologically (oldest first).
-- Every recentTransaction MUST have a non-empty title — create a concise label even if \
-the date is unknown.
-- Detect these events: payment method changes, price reductions/increases, \
-offer/counter-offer, loan rejections, lease condition changes, key meetings, agreements.
-- rawExtracted must contain ALL key-value pairs that are negotiation-relevant \
-(used for backward-compat storage).
-- All monetary values must preserve their original currency and formatting.
-- Omit any field that has no data (do not include null fields).
-- clientConditions and keyNotes should be plain-English bullet-point strings.
+- Every recentTransaction MUST have a non-empty title and summary.
+- rawExtracted must contain ALL negotiation-relevant key-value pairs found in the sheet.
+- All monetary values must preserve their original currency, units, and formatting.
+- Omit fields that have absolutely no data (do not include null or empty fields).
+- clientConditions and keyNotes must be plain-English strings, one point per item.
+- Be specific — do not write vague summaries like "price was discussed". State the actual figures.
 """
 
 
 _COMPARISON_SYSTEM_INSTRUCTION = (
-    "You are a real estate negotiation analyst specialising in commercial property deals "
+    "You are a senior real estate negotiation analyst specialising in commercial property deals "
     "in the Philippines and Southeast Asia. "
-    "Your job is to analyse spreadsheet data and extract a per-item BDD Employee vs Client comparison. "
+    "Your job is to carefully read every cell of the spreadsheet and produce an accurate "
+    "per-item comparison showing the BDD Employee position vs the Client position, "
+    "and whether each item has been AGREED or is still NEGOTIATING. "
     "Always respond with valid JSON only — no markdown, no explanation, just the JSON object."
 )
 
 _COMPARISON_PROMPT_TEMPLATE = """\
-You are analyzing a real estate negotiation document between a broker/agent (BDD Employee) and the client (buyer/lessee).
+Carefully analyse the following real estate negotiation spreadsheet. \
+Extract a precise per-item comparison between the broker/BDD Employee and the client (buyer/lessee).
 
 SPREADSHEET CONTENT:
 {sheet_text}
 
-Extract a per-item comparison for ALL negotiated topics (Costing, Payment Method, Payment Schedule, \
-Lease Term, Security Deposit, Advance Rent, Escalation, Orientation, etc.).
+=== HOW TO DETERMINE AGREED vs NEGOTIATING ===
+
+Set status="agreed" when ALL of the following are true:
+  1. Both the BDD side and the client side show the SAME value OR one side explicitly accepted the other's value.
+  2. There is a confirmation signal: words like "agreed", "confirmed", "accepted", "OK", "✓", "signed", \
+"go signal", "finalized", "no objection", "proceed", "both parties confirmed".
+  3. No open counter-offer or pending condition exists for that item.
+
+Set status="negotiating" when ANY of the following is true:
+  1. The BDD offer and the client offer differ (a gap exists).
+  2. Words like "counter", "pending", "TBD", "awaiting", "for review", "subject to", \
+"will revert", "under consideration" are present.
+  3. Only one side has stated a position with no response from the other.
+  4. The item is marked with a question mark or left blank on one side.
+
+NEVER guess or assume agreement — only mark "agreed" when there is explicit evidence.
+
+=== OUTPUT SCHEMA ===
 
 Return a JSON object with this exact schema:
 {{
   "useful": boolean,
   "reason": "string (only if useful=false — explain why the file is not negotiation-related)",
-  "overall_status": "string (e.g. 'Mostly agreed, cost still negotiating')",
-  "summary": "string (optional brief summary)",
+  "overall_status": "string — accurately summarise: how many items are agreed vs negotiating, \
+e.g. 'Deal Closed – All terms agreed', '4 of 7 items agreed, costing and payment schedule still open', \
+'All terms still under negotiation'",
+  "summary": "string — 2-4 sentence overview of where the deal stands, what has been settled, \
+and what is still blocking progress",
   "negotiation_items": [
     {{
-      "title": "string — short name of the negotiation topic (e.g. 'Costing', 'Payment Method')",
-      "bdd_offer": "string — the broker/BDD employee's position or offer",
-      "client_offer": "string — the client's counter-offer or position",
+      "title": "string — the negotiation topic (e.g. 'Costing', 'Payment Method', 'Lease Term', \
+'Security Deposit', 'Advance Rent', 'Escalation Rate', 'Move-in Date')",
+      "bdd_offer": "string — the exact BDD/broker position or offer with values",
+      "client_offer": "string — the exact client counter-offer or position with values",
       "status": "agreed | negotiating",
-      "agreed_date": "string or null — date when they agreed (only if status is 'agreed')",
-      "final_value": "string or null — what they ultimately agreed on (if agreed)",
-      "notes": "string or null — any important context"
+      "agreed_date": "string or null — ONLY set when status=agreed and a date is explicitly present",
+      "final_value": "string or null — the exact agreed value (ONLY when status=agreed)",
+      "notes": "string or null — important context, conditions, or blockers for this item"
     }}
   ]
 }}
 
-Rules:
-- Set useful=false if the file contains no negotiation-related data. Provide a clear reason.
-- Set useful=true if you can extract any meaningful negotiation data.
-- agreed_date is ONLY non-null when both sides have mutually agreed on that item.
-- status must be exactly "agreed" or "negotiating".
-- Extract ALL negotiated topics you can find — do not skip any.
-- All monetary values must preserve their original currency and formatting.
-- Omit optional fields (final_value, notes) if there is no data for them.
+=== RULES ===
+- Read EVERY row and column — do not skip any negotiation topic.
+- Extract ALL topics: Costing, Payment Method, Payment Schedule, Lease Term, Security Deposit, \
+Advance Rent, Escalation, Move-in Date, Orientation, Parking, Fit-out, and any others present.
+- status must be exactly "agreed" or "negotiating" — no other values allowed.
+- agreed_date and final_value are ONLY non-null when status="agreed" with explicit evidence.
 - negotiation_items must be a list — never null or omitted.
+- All monetary values must preserve their original currency, units, and formatting.
+- Be specific — include exact figures (e.g. "₱850,000/month" not just "high price").
+- overall_status must honestly reflect the data — do not over-optimistically say "agreed" \
+if any key term is unresolved.
 """
 
 
