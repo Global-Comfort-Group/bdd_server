@@ -160,26 +160,221 @@ def _enforce_agreed_on_match(result: AIComparisonResult) -> AIComparisonResult:
 def _cell_to_str(cell) -> str:
     if cell is None:
         return ""
-    return str(cell)
+    v = str(cell).strip()
+    # Convert float-like integers (e.g. "250.0" → "250")
+    if v.endswith(".0") and v[:-2].lstrip("-").isdigit():
+        v = v[:-2]
+    return v
 
 
 def _extract_xlsx_text(content: bytes) -> str:
+    """
+    Smart extraction for negotiation spreadsheets.
+
+    Detects the paired Owner/Company column structure common in PH real estate
+    nego files, where columns alternate [Owner Side | Company Side] across
+    negotiation rounds ordered left → right (oldest → newest).
+
+    Output format gives the AI:
+      1. Property context block
+      2. Full chronological negotiation table (every round, left → right)
+      3. LATEST POSITIONS summary — the rightmost non-empty Owner vs BDD value
+         per item (used for agreed/negotiating determination)
+    """
+    import re as _re
+
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     sheets_text: list[str] = []
 
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        rows_text: list[str] = []
 
-        for i, row in enumerate(ws.iter_rows(max_row=200, values_only=True)):
-            cells = [_cell_to_str(c) for c in row[:27]]
-            if any(c.strip() for c in cells):
-                rows_text.append("\t".join(cells))
-            if i >= 199:
+        # Read all rows into a 2-D list
+        grid: list[list[str]] = []
+        for i, row in enumerate(ws.iter_rows(max_row=300, values_only=True)):
+            cells = [_cell_to_str(c) for c in row[:30]]
+            grid.append(cells)
+            if i >= 299:
                 break
 
-        if rows_text:
-            sheets_text.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows_text))
+        if not grid:
+            continue
+
+        num_cols = max(len(r) for r in grid)
+        # Pad all rows to same width
+        for r in grid:
+            r += [""] * (num_cols - len(r))
+
+        lines: list[str] = []
+
+        # ------------------------------------------------------------------ #
+        # 1. Detect the "Owner Side / Company Side" header row
+        #    This row alternates those two labels across many columns.
+        # ------------------------------------------------------------------ #
+        side_row_idx: int = -1
+        date_row_idx: int = -1
+        owner_cols: list[int] = []   # column indices for Owner/Client side
+        company_cols: list[int] = [] # column indices for Company/BDD side
+
+        for ri, row in enumerate(grid):
+            owner_hits = sum(1 for c in row if "owner" in c.lower() or "client" in c.lower())
+            company_hits = sum(1 for c in row if "company" in c.lower() or "bdd" in c.lower())
+            if owner_hits >= 2 and company_hits >= 2:
+                side_row_idx = ri
+                for ci, c in enumerate(row):
+                    cl = c.lower()
+                    if "owner" in cl or "client" in cl:
+                        owner_cols.append(ci)
+                    elif "company" in cl or "bdd" in cl:
+                        company_cols.append(ci)
+                break
+
+        # Find dates row (row just before side_row, or detect by date pattern)
+        if side_row_idx > 0:
+            for ri in range(side_row_idx - 1, max(side_row_idx - 4, -1), -1):
+                date_count = sum(
+                    1 for c in grid[ri]
+                    if c and (_re.search(r'\d{4}', c) or _re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', c.lower()))
+                )
+                if date_count >= 2:
+                    date_row_idx = ri
+                    break
+
+        # ------------------------------------------------------------------ #
+        # 2. Context block (rows above the negotiation table)
+        # ------------------------------------------------------------------ #
+        context_end = date_row_idx if date_row_idx >= 0 else (side_row_idx if side_row_idx >= 0 else 18)
+        context_lines: list[str] = []
+        for ri in range(min(context_end, len(grid))):
+            first_val = grid[ri][0] if grid[ri] else ""
+            if first_val:
+                context_lines.append(first_val)
+        if context_lines:
+            lines.append("=== PROPERTY / DEAL CONTEXT ===")
+            lines.extend(context_lines)
+            lines.append("")
+
+        # ------------------------------------------------------------------ #
+        # 3. If paired structure detected, build structured negotiation table
+        # ------------------------------------------------------------------ #
+        if side_row_idx >= 0 and owner_cols and company_cols:
+            # Build round list: pair owner_col[i] with company_col[i]
+            rounds: list[tuple[int, int, str]] = []  # (owner_ci, company_ci, date_label)
+            dates_row = grid[date_row_idx] if date_row_idx >= 0 else [""] * num_cols
+            for i in range(min(len(owner_cols), len(company_cols))):
+                oc, cc = owner_cols[i], company_cols[i]
+                # Find date: look in dates_row at or near oc
+                date_label = ""
+                for dc in range(max(0, oc - 1), min(num_cols, oc + 2)):
+                    if dates_row[dc]:
+                        date_label = dates_row[dc]
+                        break
+                rounds.append((oc, cc, date_label or f"Round {i+1}"))
+
+            # Detect item-label column (column 0, or first col with non-empty unique labels)
+            label_col = 0
+
+            # Rows with actual negotiation data (below side_row + 1-2 header rows)
+            data_start_ri = side_row_idx + 1
+            # Skip extra sub-header rows (rep names, offer type labels)
+            for ri in range(side_row_idx + 1, min(side_row_idx + 5, len(grid))):
+                row = grid[ri]
+                non_empty = [c for c in row if c]
+                # Skip rows that are mostly labels like "initial offer", "Personal Meeting"
+                if non_empty and not any(_re.search(r'\d', c) for c in non_empty):
+                    data_start_ri = ri + 1
+                else:
+                    break
+
+            lines.append("=== NEGOTIATION TABLE (left → right = oldest round → latest round) ===")
+            lines.append("")
+
+            # Header
+            round_headers = " | ".join(
+                f"[{d}] Owner | BDD" for _, _, d in rounds
+            )
+            lines.append(f"{'ITEM':<35} | {round_headers} | LATEST OWNER | LATEST BDD")
+            lines.append("-" * 120)
+
+            # Detect row labels from column to the left of the table
+            # Try to use a label map if column 0 has values above the table
+            row_labels: dict[int, str] = {}
+            # Check rows above side_row_idx for row label mapping
+            # Actually use a fixed label list based on common nego items if col0 is empty
+            for ri in range(data_start_ri, len(grid)):
+                row = grid[ri]
+                if not any(row):
+                    continue
+
+                owner_vals = [row[oc] for oc, _, _ in rounds]
+                bdd_vals = [row[cc] for _, cc, _ in rounds]
+
+                # Skip rows that are entirely empty on both sides
+                if not any(owner_vals) and not any(bdd_vals):
+                    continue
+
+                # Item label: use col0 if it has a value, else try cols before first owner col
+                item_label = row[label_col] if row[label_col] else ""
+                if not item_label:
+                    for lc in range(0, min(owner_cols[0], 3)):
+                        if row[lc]:
+                            item_label = row[lc]
+                            break
+                if not item_label:
+                    item_label = f"Row {ri+1}"
+
+                # Build per-round cells
+                round_cells = " | ".join(
+                    f"{row[oc] or '-':>12} | {row[cc] or '-':<12}"
+                    for oc, cc, _ in rounds
+                )
+
+                # Latest non-empty owner and BDD values
+                latest_owner = next((row[oc] for oc, _, _ in reversed(rounds) if row[oc]), "")
+                latest_bdd = next((row[cc] for _, cc, _ in reversed(rounds) if row[cc]), "")
+
+                lines.append(f"{item_label:<35} | {round_cells} | {latest_owner:<14} | {latest_bdd}")
+
+            lines.append("")
+
+            # ---------------------------------------------------------------- #
+            # 4. LATEST POSITIONS summary — critical for agreed/negotiating
+            # ---------------------------------------------------------------- #
+            lines.append("=== LATEST POSITIONS SUMMARY (use this to determine agreed vs negotiating) ===")
+            lines.append("Rule: if Latest Owner == Latest BDD → AGREED. If different → NEGOTIATING.")
+            lines.append("")
+
+            for ri in range(data_start_ri, len(grid)):
+                row = grid[ri]
+                if not any(row):
+                    continue
+                item_label = row[label_col] if row[label_col] else ""
+                latest_owner = next((row[oc] for oc, _, _ in reversed(rounds) if row[oc]), "")
+                latest_bdd = next((row[cc] for _, cc, _ in reversed(rounds) if row[cc]), "")
+                if not latest_owner and not latest_bdd:
+                    continue
+                match = "✓ AGREED" if latest_owner == latest_bdd and latest_owner else "✗ NEGOTIATING"
+                lines.append(f"  {item_label:<35} | Owner: {latest_owner:<20} | BDD: {latest_bdd:<20} | {match}")
+
+        else:
+            # ---------------------------------------------------------------- #
+            # Fallback: no paired structure — dump labelled rows
+            # ---------------------------------------------------------------- #
+            lines.append("=== SPREADSHEET DATA ===")
+            header_row = next(
+                (r for r in grid if sum(1 for c in r if c) >= 2), []
+            )
+            for ri, row in enumerate(grid):
+                parts = []
+                for ci, val in enumerate(row):
+                    if val:
+                        hdr = header_row[ci] if ci < len(header_row) and header_row[ci] else f"Col{ci+1}"
+                        parts.append(f"{hdr}: {val}")
+                if parts:
+                    lines.append(" | ".join(parts))
+
+        if lines:
+            sheets_text.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(lines))
 
     wb.close()
     return "\n\n".join(sheets_text)
@@ -336,6 +531,14 @@ _COMPARISON_SYSTEM_INSTRUCTION = (
 _COMPARISON_PROMPT_TEMPLATE = """\
 Carefully analyse the following real estate negotiation spreadsheet. \
 Extract a precise per-item comparison between the broker/BDD Employee and the client (buyer/lessee).
+
+IMPORTANT — HOW TO READ THE DATA:
+- Columns are ordered LEFT → RIGHT = OLDEST round → LATEST/MOST RECENT round.
+- Each negotiation round has two columns: [Owner/Client Side] and [Company/BDD Side].
+- Always base bdd_offer and client_offer on the LATEST (rightmost) non-empty values for each item.
+- The "LATEST POSITIONS SUMMARY" section (if present) already shows you the final positions — use it.
+- A "✓ AGREED" marker in the summary means the values match — set status="agreed".
+- A "✗ NEGOTIATING" marker means the values differ — set status="negotiating".
 
 SPREADSHEET CONTENT:
 {sheet_text}
