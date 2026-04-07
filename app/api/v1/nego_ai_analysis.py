@@ -160,6 +160,12 @@ def _enforce_agreed_on_match(result: AIComparisonResult) -> AIComparisonResult:
 def _cell_to_str(cell) -> str:
     if cell is None:
         return ""
+    # For numeric cells: detect rate/percentage values (0 < val < 1, ≤ 4 decimal places)
+    if isinstance(cell, float) and 0 < cell < 1:
+        # Round to avoid floating point noise, display as percentage
+        pct = round(cell * 100, 4)
+        formatted = f"{int(pct)}%" if pct == int(pct) else f"{pct}%"
+        return formatted
     v = str(cell).strip()
     # Convert float-like integers (e.g. "250.0" → "250")
     if v.endswith(".0") and v[:-2].lstrip("-").isdigit():
@@ -513,6 +519,7 @@ Return a JSON object with this exact schema:
 - Every recentTransaction MUST have a non-empty title and summary.
 - rawExtracted must contain ALL negotiation-relevant key-value pairs found in the sheet.
 - All monetary values must preserve their original currency, units, and formatting.
+- Decimal values that represent rates or percentages (e.g. 0.04, 0.05) must be displayed as percentages (e.g. 4%, 5%).
 - Omit fields that have absolutely no data (do not include null or empty fields).
 - clientConditions and keyNotes must be plain-English strings, one point per item.
 - Be specific — do not write vague summaries like "price was discussed". State the actual figures.
@@ -600,6 +607,7 @@ Advance Rent, Escalation, Move-in Date, Orientation, Parking, Fit-out, and any o
 - agreed_date and final_value are ONLY non-null when status="agreed" with explicit evidence.
 - negotiation_items must be a list — never null or omitted.
 - All monetary values must preserve their original currency, units, and formatting.
+- Decimal values that represent rates or percentages (e.g. 0.04, 0.05) must be displayed as percentages (e.g. 4%, 5%).
 - Be specific — include exact figures (e.g. "₱850,000/month" not just "high price").
 - overall_status must honestly reflect the data — do not over-optimistically say "agreed" \
 if any key term is unresolved.
