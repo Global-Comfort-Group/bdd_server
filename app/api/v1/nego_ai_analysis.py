@@ -95,6 +95,65 @@ class UploadForPropertyResponse(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Post-processing: enforce matching-value = agreed                            #
+# --------------------------------------------------------------------------- #
+
+def _normalize_for_compare(value: str) -> str:
+    """Lowercase, strip whitespace, remove common punctuation noise for comparison."""
+    import re
+    if not value:
+        return ""
+    v = value.strip().lower()
+    # Collapse multiple spaces/newlines
+    v = re.sub(r'\s+', ' ', v)
+    # Remove trailing punctuation that doesn't affect meaning
+    v = v.strip(".,;:")
+    return v
+
+
+def _enforce_agreed_on_match(result: AIComparisonResult) -> AIComparisonResult:
+    """
+    Programmatically override status to 'agreed' whenever bdd_offer and
+    client_offer normalise to the same string — regardless of what the AI returned.
+    Also override to 'negotiating' when they differ, so the AI cannot hallucinate agreement.
+    """
+    for item in result.negotiation_items:
+        bdd = _normalize_for_compare(item.bdd_offer)
+        client = _normalize_for_compare(item.client_offer)
+
+        if not bdd or not client:
+            # One side is missing — cannot determine, leave AI decision
+            continue
+
+        if bdd == client:
+            item.status = "agreed"
+            if not item.final_value:
+                item.final_value = item.bdd_offer
+        else:
+            # Values differ → must be negotiating, override any AI hallucination
+            item.status = "negotiating"
+            item.final_value = None
+            item.agreed_date = None
+
+    # Recompute overall_status based on enforced statuses
+    if result.negotiation_items:
+        total = len(result.negotiation_items)
+        agreed = sum(1 for i in result.negotiation_items if i.status == "agreed")
+        if agreed == total:
+            result.overall_status = "Deal Closed – All terms agreed"
+        elif agreed == 0:
+            result.overall_status = "All terms still under negotiation"
+        else:
+            still_open = [i.title for i in result.negotiation_items if i.status == "negotiating"]
+            result.overall_status = (
+                f"{agreed} of {total} items agreed – "
+                f"{', '.join(still_open)} still negotiating"
+            )
+
+    return result
+
+
+# --------------------------------------------------------------------------- #
 # File → plain-text helpers                                                   #
 # --------------------------------------------------------------------------- #
 
@@ -645,6 +704,7 @@ async def upload_for_property(
     # Call Gemini AI with comparison prompt first — before touching the DB
     try:
         ai_result = await _call_gemini_comparison(sheet_text, api_key)
+        ai_result = _enforce_agreed_on_match(ai_result)
     except HTTPException:
         raise  # let 502/503 from Gemini propagate with its real detail
     except json.JSONDecodeError as exc:
