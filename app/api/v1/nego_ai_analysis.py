@@ -283,20 +283,27 @@ SPREADSHEET CONTENT:
 
 === HOW TO DETERMINE AGREED vs NEGOTIATING ===
 
-Set status="agreed" when ALL of the following are true:
-  1. Both the BDD side and the client side show the SAME value OR one side explicitly accepted the other's value.
-  2. There is a confirmation signal: words like "agreed", "confirmed", "accepted", "OK", "✓", "signed", \
-"go signal", "finalized", "no objection", "proceed", "both parties confirmed".
-  3. No open counter-offer or pending condition exists for that item.
+Set status="agreed" when ANY of the following is true:
+  1. **MATCHING VALUES (highest priority)** — the BDD offer value and the client offer value are \
+the same amount/term (e.g. both say "₱500,000", both say "3 years", both say "Cash"). \
+Matching values = deal reached, regardless of whether a confirmation word is present.
+  2. One side explicitly accepted the other's exact value with no further counter \
+(e.g. client says "OK with ₱500,000" when BDD offered ₱500,000).
+  3. Explicit confirmation words are present for that item: "agreed", "confirmed", "accepted", \
+"OK", "✓", "signed", "go signal", "finalized", "no objection", "proceed", "both parties confirmed".
 
 Set status="negotiating" when ANY of the following is true:
-  1. The BDD offer and the client offer differ (a gap exists).
-  2. Words like "counter", "pending", "TBD", "awaiting", "for review", "subject to", \
+  1. The BDD offer value and the client offer value are DIFFERENT (a gap exists).
+  2. Only one side has stated a position with no response from the other.
+  3. Words like "counter", "pending", "TBD", "awaiting", "for review", "subject to", \
 "will revert", "under consideration" are present.
-  3. Only one side has stated a position with no response from the other.
   4. The item is marked with a question mark or left blank on one side.
 
-NEVER guess or assume agreement — only mark "agreed" when there is explicit evidence.
+MATCHING VALUE EXAMPLES:
+  - BDD: "₱500,000/month"  |  Client: "₱500,000/month"  →  status="agreed", final_value="₱500,000/month"
+  - BDD: "3 years"          |  Client: "3 years"          →  status="agreed", final_value="3 years"
+  - BDD: "₱800,000"         |  Client: "₱750,000"         →  status="negotiating" (different values)
+  - BDD: "Cash"             |  Client: "Cash"             →  status="agreed", final_value="Cash"
 
 === OUTPUT SCHEMA ===
 
