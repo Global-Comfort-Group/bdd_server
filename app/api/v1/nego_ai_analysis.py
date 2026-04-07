@@ -99,16 +99,55 @@ class UploadForPropertyResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 
 def _normalize_for_compare(value: str) -> str:
-    """Lowercase, strip whitespace, remove common punctuation noise for comparison."""
+    """
+    Normalize a negotiation value for equality comparison.
+    Strips currency symbols, thousands separators, trailing .0, whitespace,
+    and trailing punctuation so that '₱625,000' == '625000' == 'PHP 625,000'.
+    """
     import re
     if not value:
         return ""
     v = value.strip().lower()
-    # Collapse multiple spaces/newlines
+    # Remove currency symbols (₱ $ € £ ¥ and "PHP"/"USD" prefix)
+    v = re.sub(r'[₱$€£¥]', '', v)
+    v = re.sub(r'\b(php|usd|eur|sgd)\b', '', v)
+    # Remove thousands-separator commas (1,500 → 1500)
+    v = re.sub(r'(?<=\d),(?=\d{3})', '', v)
+    # Normalize trailing .0 on integers (625000.0 → 625000)
+    v = re.sub(r'\b(\d+)\.0+\b', r'\1', v)
+    # Collapse whitespace
     v = re.sub(r'\s+', ' ', v)
-    # Remove trailing punctuation that doesn't affect meaning
-    v = v.strip(".,;:")
+    # Strip trailing punctuation
+    v = v.strip(".,;: ")
     return v
+
+
+def _deduplicate_items(result: AIComparisonResult) -> AIComparisonResult:
+    """
+    Merge rows the AI created for the same topic under different labels
+    (e.g. 'Security Deposit (Initial Offer)' + 'Security Deposit (Latest Position)')
+    by stripping parenthetical suffixes and keeping the last occurrence (latest round).
+    """
+    import re
+
+    def _base_title(title: str) -> str:
+        # Strip trailing parenthetical like "(Initial Offer)", "(Latest Position)", "(Round 1)"
+        return re.sub(r'\s*\(.*?\)\s*$', '', title).strip().lower()
+
+    seen: dict = {}  # base_title → index in deduped list
+    deduped = []
+
+    for item in result.negotiation_items:
+        base = _base_title(item.title)
+        if base in seen:
+            # Replace the earlier row with this later one (later = more recent round)
+            deduped[seen[base]] = item
+        else:
+            seen[base] = len(deduped)
+            deduped.append(item)
+
+    result.negotiation_items = deduped
+    return result
 
 
 def _enforce_agreed_on_match(result: AIComparisonResult) -> AIComparisonResult:
@@ -603,6 +642,11 @@ and what is still blocking progress",
 - Read EVERY row and column — do not skip any negotiation topic.
 - Extract ALL topics: Costing, Payment Method, Payment Schedule, Lease Term, Security Deposit, \
 Advance Rent, Escalation, Move-in Date, Orientation, Parking, Fit-out, and any others present.
+- **ONE ROW PER TOPIC** — Each negotiation topic must appear EXACTLY ONCE in negotiation_items. \
+Do NOT create separate rows for "Initial Offer" and "Latest Position" of the same topic. \
+Do NOT append "(Initial Offer)", "(Latest Position)", "(Round 1)", etc. to the title. \
+The title must be the plain topic name only (e.g. "Security Deposit", not "Security Deposit (Latest Position)"). \
+If a topic appears multiple times across rounds, consolidate into ONE row using the LATEST values only.
 - status must be exactly "agreed" or "negotiating" — no other values allowed.
 - agreed_date and final_value are ONLY non-null when status="agreed" with explicit evidence.
 - negotiation_items must be a list — never null or omitted.
@@ -915,6 +959,7 @@ async def upload_for_property(
     # Call Gemini AI with comparison prompt first — before touching the DB
     try:
         ai_result = await _call_gemini_comparison(sheet_text, api_key)
+        ai_result = _deduplicate_items(ai_result)
         ai_result = _enforce_agreed_on_match(ai_result)
     except HTTPException:
         raise  # let 502/503 from Gemini propagate with its real detail
