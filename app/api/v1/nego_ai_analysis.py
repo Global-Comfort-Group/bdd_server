@@ -310,6 +310,7 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
             "temperature": 0.1,
             "responseMimeType": "application/json",
             "maxOutputTokens": 65536,
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
@@ -353,6 +354,7 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
             "temperature": 0.1,
             "responseMimeType": "application/json",
             "maxOutputTokens": 65536,
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
