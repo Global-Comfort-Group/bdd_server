@@ -222,17 +222,39 @@ def _cell_to_str(cell) -> str:
 
 def _extract_xlsx_text(content: bytes) -> str:
     """
-    Smart extraction for negotiation spreadsheets.
+    Complete raw extraction — dumps every non-empty cell verbatim so the AI
+    has the full spreadsheet content and cannot hallucinate missing data.
+    """
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    sheets_text: list[str] = []
 
-    Detects the paired Owner/Company column structure common in PH real estate
-    nego files, where columns alternate [Owner Side | Company Side] across
-    negotiation rounds ordered left → right (oldest → newest).
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows_text: list[str] = []
 
-    Output format gives the AI:
-      1. Property context block
-      2. Full chronological negotiation table (every round, left → right)
-      3. LATEST POSITIONS summary — the rightmost non-empty Owner vs BDD value
-         per item (used for agreed/negotiating determination)
+        for i, row in enumerate(ws.iter_rows(max_row=500, values_only=True)):
+            if i >= 499:
+                break
+            cells = [_cell_to_str(c) for c in row[:50]]
+            # Trim trailing empty cells
+            while cells and not cells[-1]:
+                cells.pop()
+            if not any(cells):
+                continue
+            rows_text.append("\t".join(cells))
+
+        if rows_text:
+            sheets_text.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows_text))
+
+    wb.close()
+    return "\n\n".join(sheets_text)
+
+
+def _UNUSED_extract_xlsx_text_structured(content: bytes) -> str:
+    """
+    Legacy smart extraction kept for reference — was causing hallucinations
+    because the metadata filters stripped real data, leaving the AI with
+    sparse input it would fill by inventing content.
     """
     import re as _re
 
@@ -777,7 +799,7 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
 
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
-        f"/gemini-2.5-flash:generateContent?key={api_key}"
+        f"/gemini-2.5-pro:generateContent?key={api_key}"
     )
     payload = {
         "system_instruction": {"parts": [{"text": _COMPARISON_SYSTEM_INSTRUCTION}]},
@@ -788,7 +810,7 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
             "temperature": 0.1,
             "responseMimeType": "application/json",
             "maxOutputTokens": 65536,
-            "thinkingConfig": {"thinkingBudget": 8000},
+            "thinkingConfig": {"thinkingBudget": 15000},
         },
     }
 
@@ -823,7 +845,7 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
 
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
-        f"/gemini-2.5-flash:generateContent?key={api_key}"
+        f"/gemini-2.5-pro:generateContent?key={api_key}"
     )
     payload = {
         "system_instruction": {"parts": [{"text": _SYSTEM_INSTRUCTION}]},
@@ -834,7 +856,7 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
             "temperature": 0.1,
             "responseMimeType": "application/json",
             "maxOutputTokens": 65536,
-            "thinkingConfig": {"thinkingBudget": 8000},
+            "thinkingConfig": {"thinkingBudget": 15000},
         },
     }
 
