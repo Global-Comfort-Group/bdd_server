@@ -115,6 +115,8 @@ def _normalize_for_compare(value: str) -> str:
     v = re.sub(r'(?<=\d),(?=\d{3})', '', v)
     # Normalize trailing .0 on integers (625000.0 → 625000)
     v = re.sub(r'\b(\d+)\.0+\b', r'\1', v)
+    # Strip time component from datetime strings (2021-07-13 00:00:00 → 2021-07-13)
+    v = re.sub(r'^(\d{4}-\d{2}-\d{2})\s+\d{2}:\d{2}(:\d{2})?$', r'\1', v)
     # Collapse whitespace
     v = re.sub(r'\s+', ' ', v)
     # Strip trailing punctuation
@@ -173,6 +175,12 @@ def _enforce_agreed_on_match(result: AIComparisonResult) -> AIComparisonResult:
             item.status = "negotiating"
             item.final_value = None
             item.agreed_date = None
+
+    # Strip time component from agreed_date (e.g. "2021-07-13 00:00:00" → "2021-07-13")
+    import re as _re2
+    for item in result.negotiation_items:
+        if item.agreed_date:
+            item.agreed_date = _re2.sub(r'\s+\d{2}:\d{2}(:\d{2})?$', '', item.agreed_date).strip()
 
     # Recompute overall_status based on enforced statuses
     if result.negotiation_items:
@@ -316,36 +324,94 @@ def _extract_xlsx_text(content: bytes) -> str:
                         break
                 rounds.append((oc, cc, date_label or f"Round {i+1}"))
 
-            # Detect item-label column (column 0, or first col with non-empty unique labels)
-            label_col = 0
-
             # Rows with actual negotiation data (below side_row + 1-2 header rows)
             data_start_ri = side_row_idx + 1
             # Skip extra sub-header rows (rep names, offer type labels)
             for ri in range(side_row_idx + 1, min(side_row_idx + 5, len(grid))):
                 row = grid[ri]
                 non_empty = [c for c in row if c]
-                # Skip rows that are mostly labels like "initial offer", "Personal Meeting"
                 if non_empty and not any(_re.search(r'\d', c) for c in non_empty):
                     data_start_ri = ri + 1
                 else:
                     break
 
+            # ---------------------------------------------------------------- #
+            # Smart label column detection
+            # Score each pre-data column by how many rows have a descriptive
+            # text label (not a pure number, not a date, contains letters).
+            # ---------------------------------------------------------------- #
+            def _is_descriptive_label(v: str) -> bool:
+                if not v:
+                    return False
+                # Pure number → not a label
+                if _re.match(r'^\d+(\.\d+)?$', v.strip()):
+                    return False
+                # ISO date → not a label
+                if _re.search(r'\d{4}-\d{2}-\d{2}', v):
+                    return False
+                # Contains at least one letter → probably a label
+                return bool(_re.search(r'[a-zA-Z]', v))
+
+            label_col = 0
+            best_label_score = -1
+            max_label_ci = min(owner_cols[0] if owner_cols else 3, 5)
+            for ci in range(0, max_label_ci):
+                score = sum(
+                    1 for ri in range(data_start_ri, len(grid))
+                    if ci < len(grid[ri]) and _is_descriptive_label(grid[ri][ci])
+                )
+                if score > best_label_score:
+                    best_label_score = score
+                    label_col = ci
+
+            # ---------------------------------------------------------------- #
+            # Helper: is this row a real negotiation item (not metadata)?
+            # Skip rows where the label looks like raw data, not a term name.
+            # ---------------------------------------------------------------- #
+            def _is_metadata_row(label: str, owner_val: str, bdd_val: str) -> bool:
+                if not label:
+                    return False
+                l = label.strip().lower()
+                # Pure number used as label
+                if _re.match(r'^\d+(\.\d+)?$', label.strip()):
+                    return True
+                # ISO datetime as label
+                if _re.search(r'\d{4}-\d{2}-\d{2}', label):
+                    return True
+                # Single generic word with no negotiation meaning
+                if l in ('date', 'recommended', 'notes', 'remarks', 'comments', 'status', 'total',
+                         'client', 'owner', 'tenant', 'lessor', 'lessee', 'location', 'venue',
+                         'property', 'unit', 'floor', 'building', 'bldg', 'type', 'use'):
+                    return True
+                # Long person name (≥4 words, no digits) → owner name row
+                words = label.split()
+                if len(words) >= 4 and not _re.search(r'\d', label) and label == (owner_val or bdd_val or label):
+                    return True
+                # Looks like an address (contains "Street", "Ave", "Village", "Q.C", "City")
+                if _re.search(r'\b(street|ave|avenue|village|q\.c|city|blvd|road|rd\.)\b', l):
+                    return True
+                # Meeting location/time row: contains time (am/pm) or meeting keywords, AND bdd is empty
+                if not bdd_val and _re.search(r'\b(am|pm)\b|\b(office|meeting|conference)\b', l):
+                    return True
+                # Meeting type row: label is a meeting/activity type AND bdd is empty
+                if not bdd_val and _re.search(r'\b(meeting|activity|call|visit|site|inspection)\b', l):
+                    return True
+                # Label is a company/brand/location name that is identical to (or contained in) the client value
+                # and BDD has no position (e.g. "SOGO" title with BDD empty, client "SOGO")
+                if not bdd_val and owner_val and l == owner_val.strip().lower():
+                    return True
+                # Label contains "/" and looks like a location+time ("Manhattan / office 2:00 pm")
+                if '/' in label and _re.search(r'\b(am|pm|\d{1,2}:\d{2}|office|floor|bldg|building)\b', l):
+                    return True
+                return False
+
             lines.append("=== NEGOTIATION TABLE (left → right = oldest round → latest round) ===")
             lines.append("")
 
-            # Header
-            round_headers = " | ".join(
-                f"[{d}] Owner | BDD" for _, _, d in rounds
-            )
+            round_headers = " | ".join(f"[{d}] Owner | BDD" for _, _, d in rounds)
             lines.append(f"{'ITEM':<35} | {round_headers} | LATEST OWNER | LATEST BDD")
             lines.append("-" * 120)
 
-            # Detect row labels from column to the left of the table
-            # Try to use a label map if column 0 has values above the table
-            row_labels: dict[int, str] = {}
-            # Check rows above side_row_idx for row label mapping
-            # Actually use a fixed label list based on common nego items if col0 is empty
             for ri in range(data_start_ri, len(grid)):
                 row = grid[ri]
                 if not any(row):
@@ -353,31 +419,31 @@ def _extract_xlsx_text(content: bytes) -> str:
 
                 owner_vals = [row[oc] for oc, _, _ in rounds]
                 bdd_vals = [row[cc] for _, cc, _ in rounds]
-
-                # Skip rows that are entirely empty on both sides
                 if not any(owner_vals) and not any(bdd_vals):
                     continue
 
-                # Item label: use col0 if it has a value, else try cols before first owner col
-                item_label = row[label_col] if row[label_col] else ""
+                # Item label from best detected label column, then fallback to other pre-data cols
+                item_label = row[label_col] if label_col < len(row) and row[label_col] else ""
                 if not item_label:
-                    for lc in range(0, min(owner_cols[0], 3)):
-                        if row[lc]:
+                    for lc in range(0, max_label_ci):
+                        if lc != label_col and lc < len(row) and _is_descriptive_label(row[lc]):
                             item_label = row[lc]
                             break
+                # Last resort: use row number (AI instructed to skip these)
                 if not item_label:
-                    item_label = f"Row {ri+1}"
+                    item_label = f"[Row {ri+1} — no label found]"
 
-                # Build per-round cells
+                latest_owner = next((row[oc] for oc, _, _ in reversed(rounds) if row[oc]), "")
+                latest_bdd = next((row[cc] for _, cc, _ in reversed(rounds) if row[cc]), "")
+
+                # Skip obvious metadata rows
+                if _is_metadata_row(item_label, latest_owner, latest_bdd):
+                    continue
+
                 round_cells = " | ".join(
                     f"{row[oc] or '-':>12} | {row[cc] or '-':<12}"
                     for oc, cc, _ in rounds
                 )
-
-                # Latest non-empty owner and BDD values
-                latest_owner = next((row[oc] for oc, _, _ in reversed(rounds) if row[oc]), "")
-                latest_bdd = next((row[cc] for _, cc, _ in reversed(rounds) if row[cc]), "")
-
                 lines.append(f"{item_label:<35} | {round_cells} | {latest_owner:<14} | {latest_bdd}")
 
             lines.append("")
@@ -393,10 +459,12 @@ def _extract_xlsx_text(content: bytes) -> str:
                 row = grid[ri]
                 if not any(row):
                     continue
-                item_label = row[label_col] if row[label_col] else ""
+                item_label = row[label_col] if label_col < len(row) and row[label_col] else ""
                 latest_owner = next((row[oc] for oc, _, _ in reversed(rounds) if row[oc]), "")
                 latest_bdd = next((row[cc] for _, cc, _ in reversed(rounds) if row[cc]), "")
                 if not latest_owner and not latest_bdd:
+                    continue
+                if _is_metadata_row(item_label, latest_owner, latest_bdd):
                     continue
                 match = "✓ AGREED" if latest_owner == latest_bdd and latest_owner else "✗ NEGOTIATING"
                 lines.append(f"  {item_label:<35} | Owner: {latest_owner:<20} | BDD: {latest_bdd:<20} | {match}")
@@ -491,12 +559,20 @@ _SYSTEM_INSTRUCTION = (
     "in the Philippines and Southeast Asia. "
     "Your job is to carefully read every cell of the spreadsheet and extract a structured, "
     "accurate negotiation DECISION TIMELINE — including whether each item is AGREED or still NEGOTIATING. "
+    "CRITICAL: You MUST only extract information that is EXPLICITLY present in the spreadsheet data "
+    "provided in the user message. Do NOT invent, assume, fabricate, or hallucinate ANY values, "
+    "names, dates, figures, or negotiation terms. If data is not in the spreadsheet, do not include it. "
     "Always respond with valid JSON only — no markdown, no explanation, just the JSON object."
 )
 
 _USER_PROMPT_TEMPLATE = """\
 Carefully analyse the following spreadsheet data and extract ALL negotiation information, \
 focusing on building an accurate chronological DECISION TIMELINE.
+
+⚠️  STRICT GROUNDING RULE: Every value, date, figure, and term you include in your output MUST \
+come directly from the spreadsheet data below. Do NOT invent, assume, or extrapolate anything. \
+If a field has no data in the spreadsheet, leave it null or omit it. \
+If the spreadsheet content is insufficient to produce a meaningful analysis, set useful=false.
 
 SPREADSHEET CONTENT:
 {sheet_text}
@@ -571,12 +647,20 @@ _COMPARISON_SYSTEM_INSTRUCTION = (
     "Your job is to carefully read every cell of the spreadsheet and produce an accurate "
     "per-item comparison showing the BDD Employee position vs the Client position, "
     "and whether each item has been AGREED or is still NEGOTIATING. "
+    "CRITICAL: You MUST only extract information that is EXPLICITLY present in the spreadsheet data "
+    "provided in the user message. Do NOT invent, assume, fabricate, or hallucinate ANY values, "
+    "names, dates, figures, or negotiation terms. If data is not in the spreadsheet, do not include it. "
     "Always respond with valid JSON only — no markdown, no explanation, just the JSON object."
 )
 
 _COMPARISON_PROMPT_TEMPLATE = """\
 Carefully analyse the following real estate negotiation spreadsheet. \
 Extract a precise per-item comparison between the broker/BDD Employee and the client (buyer/lessee).
+
+⚠️  STRICT GROUNDING RULE: Every value, date, figure, and term you include in your output MUST \
+come directly from the spreadsheet data below. Do NOT invent, assume, or extrapolate anything. \
+If a field has no data in the spreadsheet, leave it null or omit it. \
+If the spreadsheet content is insufficient to produce a meaningful analysis, set useful=false.
 
 IMPORTANT — HOW TO READ THE DATA:
 - Columns are ordered LEFT → RIGHT = OLDEST round → LATEST/MOST RECENT round.
@@ -631,7 +715,11 @@ and what is still blocking progress",
       "bdd_offer": "string — the exact BDD/broker position or offer with values",
       "client_offer": "string — the exact client counter-offer or position with values",
       "status": "agreed | negotiating",
-      "agreed_date": "string or null — ONLY set when status=agreed and a date is explicitly present",
+      "agreed_date": "string or null — The date when both sides converged on the same value. \
+Look for the date column/row where both BDD and client show matching values. \
+If the client proposed a value on 05/27 and BDD matched it on 05/28, agreed_date = '05/28'. \
+Use the LATER of the two dates (i.e. when the second party accepted). \
+Set to null only if no date can be inferred from the spreadsheet.",
       "final_value": "string or null — the exact agreed value (ONLY when status=agreed)",
       "notes": "string or null — important context, conditions, or blockers for this item"
     }}
@@ -647,8 +735,31 @@ Do NOT create separate rows for "Initial Offer" and "Latest Position" of the sam
 Do NOT append "(Initial Offer)", "(Latest Position)", "(Round 1)", etc. to the title. \
 The title must be the plain topic name only (e.g. "Security Deposit", not "Security Deposit (Latest Position)"). \
 If a topic appears multiple times across rounds, consolidate into ONE row using the LATEST values only.
+- **TITLE MUST BE THE NEGOTIATION TERM NAME** — Use the descriptive label from the label/term column \
+(e.g. "Area Rate", "Security Deposit", "Lease Term", "Advance Rent", "Escalation Rate"). \
+NEVER use "Row X", raw numbers, spreadsheet row identifiers, or "[Row X — no label found]" as a title — \
+if a row has no meaningful label, SKIP it entirely.
+- **SKIP METADATA ROWS** — Do NOT include rows for:
+  * Owner/person names or property addresses
+  * Raw date values as topics ("2021-07-13", "Date")
+  * Single generic words ("Recommended", "Status")
+  * Meeting logistics: meeting location ("Manhattan / office 2:00 pm"), meeting type \
+("Personal Meeting", "Site Visit"), venue/hotel names used as row labels ("SOGO", "Ortigas"), \
+or activity/note rows — these are context info, NOT negotiation terms
+  * Any row where the BDD Employee column is empty AND the value is just a location, \
+meeting type, or company name
+  * Row labels that are property/deal identifiers: "Client", "Owner", "Tenant", \
+"Location", "Property", "Venue", "Unit", "Floor", "Building", "Type"
+  * Row labels that are note fields: "Notes", "Remarks", "Comments"
+  * ONLY include rows that are actual financial or contractual negotiation terms: \
+Monthly Rent, Security Deposit, Advance Rent, Lease Term, Escalation Rate, \
+Escalation Start, Payment Terms, Grace Period, Fit-out Period, Free Rental, \
+Parking, Renovation Budget, Move-in Date, and similar quantifiable deal terms.
 - status must be exactly "agreed" or "negotiating" — no other values allowed.
-- agreed_date and final_value are ONLY non-null when status="agreed" with explicit evidence.
+- agreed_date: for agreed items, find the date in the spreadsheet when both values matched. \
+  Use the later date (when the second party accepted). If the spreadsheet has date columns or \
+  date rows, extract the exact date. Set null only if truly no date is present anywhere.
+- final_value is ONLY non-null when status="agreed".
 - negotiation_items must be a list — never null or omitted.
 - All monetary values must preserve their original currency, units, and formatting.
 - Decimal values that represent rates or percentages (e.g. 0.04, 0.05) must be displayed as percentages (e.g. 4%, 5%).
@@ -661,6 +772,8 @@ if any key term is unresolved.
 async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparisonResult:
     """Call Gemini REST API with the comparison prompt and return parsed AIComparisonResult."""
     import httpx
+
+    print(f"📄 Sending {len(sheet_text)} chars to Gemini comparison. Preview:\n{sheet_text[:800]}\n---")
 
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
@@ -675,7 +788,7 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
             "temperature": 0.1,
             "responseMimeType": "application/json",
             "maxOutputTokens": 65536,
-            "thinkingConfig": {"thinkingBudget": 0},
+            "thinkingConfig": {"thinkingBudget": 8000},
         },
     }
 
@@ -706,6 +819,8 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
     """Call Gemini REST API and return parsed AIAnalysisResult."""
     import httpx
 
+    print(f"📄 Sending {len(sheet_text)} chars to Gemini analysis. Preview:\n{sheet_text[:800]}\n---")
+
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
         f"/gemini-2.5-flash:generateContent?key={api_key}"
@@ -719,7 +834,7 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
             "temperature": 0.1,
             "responseMimeType": "application/json",
             "maxOutputTokens": 65536,
-            "thinkingConfig": {"thinkingBudget": 0},
+            "thinkingConfig": {"thinkingBudget": 8000},
         },
     }
 
