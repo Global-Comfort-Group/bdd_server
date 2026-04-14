@@ -1,7 +1,7 @@
 import io
 import csv
 import json
-from datetime import datetime
+from datetime import datetime, date as date_type
 from typing import Optional, List
 
 import openpyxl
@@ -101,20 +101,33 @@ class UploadForPropertyResponse(BaseModel):
 def _normalize_for_compare(value: str) -> str:
     """
     Normalize a negotiation value for equality comparison.
-    Strips currency symbols, thousands separators, trailing .0, whitespace,
-    and trailing punctuation so that '₱625,000' == '625000' == 'PHP 625,000'.
+    Handles: currency symbols, thousands separators, M/K shorthand, unit
+    variations, and trailing formatting so that, e.g.:
+      '₱625,000' == '625000' == 'PHP 625,000'
+      '5M'       == '5,000,000'
+      '/month'   == 'per month' == 'monthly'
+      '3 years'  == '3 yrs'
     """
     import re
     if not value:
         return ""
     v = value.strip().lower()
-    # Remove currency symbols (₱ $ € £ ¥ and "PHP"/"USD" prefix)
+    # Remove currency symbols (₱ $ € £ ¥ and "PHP"/"USD" prefix/suffix)
     v = re.sub(r'[₱$€£¥]', '', v)
     v = re.sub(r'\b(php|usd|eur|sgd)\b', '', v)
+    # Expand shorthand multipliers before stripping commas
+    #   5m / 5M → 5000000,  1.5m → 1500000,  500k → 500000
+    v = re.sub(r'(\d+(?:\.\d+)?)\s*m\b', lambda m: str(int(float(m.group(1)) * 1_000_000)), v)
+    v = re.sub(r'(\d+(?:\.\d+)?)\s*k\b', lambda m: str(int(float(m.group(1)) * 1_000)), v)
     # Remove thousands-separator commas (1,500 → 1500)
     v = re.sub(r'(?<=\d),(?=\d{3})', '', v)
     # Normalize trailing .0 on integers (625000.0 → 625000)
     v = re.sub(r'\b(\d+)\.0+\b', r'\1', v)
+    # Normalize time/period units to a canonical form
+    v = re.sub(r'\bper\s+month\b|\bmonthly\b', '/month', v)
+    v = re.sub(r'\bper\s+year\b|\bannually\b|\bper\s+annum\b', '/year', v)
+    v = re.sub(r'\byears?\b|\byrs?\b', 'year', v)
+    v = re.sub(r'\bmonths?\b|\bmos?\b', 'month', v)
     # Strip time component from datetime strings (2021-07-13 00:00:00 → 2021-07-13)
     v = re.sub(r'^(\d{4}-\d{2}-\d{2})\s+\d{2}:\d{2}(:\d{2})?$', r'\1', v)
     # Collapse whitespace
@@ -154,33 +167,50 @@ def _deduplicate_items(result: AIComparisonResult) -> AIComparisonResult:
 
 def _enforce_agreed_on_match(result: AIComparisonResult) -> AIComparisonResult:
     """
-    Programmatically override status to 'agreed' whenever bdd_offer and
-    client_offer normalise to the same string — regardless of what the AI returned.
-    Also override to 'negotiating' when they differ, so the AI cannot hallucinate agreement.
+    Two-rule post-processing guard:
+
+    Rule 1 — CONFIRM AGREED (values match):
+      If bdd_offer and client_offer normalize to the same string, force status="agreed"
+      regardless of what the AI said.  The AI sometimes misses obvious matches.
+
+    Rule 2 — PREVENT HALLUCINATED AGREEMENT (values clearly differ):
+      If the AI says "agreed" but values normalize to DIFFERENT strings, override to
+      "negotiating" and wipe final_value / agreed_date.
+      We do NOT override when the AI already says "negotiating" and values differ —
+      that is a consistent, correct state and touching it would create contradictions
+      between the AI's own summary and the item statuses.
     """
     for item in result.negotiation_items:
         bdd = _normalize_for_compare(item.bdd_offer)
         client = _normalize_for_compare(item.client_offer)
 
         if not bdd or not client:
-            # One side is missing — cannot determine, leave AI decision
+            # One side is missing — cannot determine, leave AI decision as-is
             continue
 
         if bdd == client:
+            # Rule 1: values match → always agreed
             item.status = "agreed"
             if not item.final_value:
                 item.final_value = item.bdd_offer
-        else:
-            # Values differ → must be negotiating, override any AI hallucination
+        elif item.status == "agreed":
+            # Rule 2: AI claims agreed but normalized values differ → hallucination, fix it
             item.status = "negotiating"
             item.final_value = None
             item.agreed_date = None
+        # else: AI says "negotiating" and values differ → consistent, leave untouched
 
     # Strip time component from agreed_date (e.g. "2021-07-13 00:00:00" → "2021-07-13")
     import re as _re2
     for item in result.negotiation_items:
         if item.agreed_date:
             item.agreed_date = _re2.sub(r'\s+\d{2}:\d{2}(:\d{2})?$', '', item.agreed_date).strip()
+
+    # For items still being negotiated, fill the date field with "Negotiating"
+    # so the frontend table always has something in that column (never blank).
+    for item in result.negotiation_items:
+        if item.status == "negotiating" and not item.agreed_date:
+            item.agreed_date = "Negotiating"
 
     # Recompute overall_status based on enforced statuses
     if result.negotiation_items:
@@ -200,6 +230,145 @@ def _enforce_agreed_on_match(result: AIComparisonResult) -> AIComparisonResult:
     return result
 
 
+def _strip_hallucinated_dates(result: AIComparisonResult, sheet_text: str) -> AIComparisonResult:
+    """
+    Post-processing guard: null out any agreed_date whose year does not appear
+    anywhere in the raw sheet text.  If the spreadsheet only contains 2025/2026,
+    a model-fabricated "2023-07-13" is silently dropped rather than shown to the user.
+    """
+    import re as _re3
+
+    # Collect every 4-digit year that actually appears in the spreadsheet
+    sheet_years: set[str] = set(_re3.findall(r'\b(20\d{2})\b', sheet_text))
+
+    for item in result.negotiation_items:
+        if not item.agreed_date:
+            continue
+        date_years = set(_re3.findall(r'\b(20\d{2})\b', item.agreed_date))
+        if date_years and not date_years.intersection(sheet_years):
+            # The AI invented a year that is not in the spreadsheet — wipe it
+            item.agreed_date = None
+
+    return result
+
+
+def _strip_hallucinated_transaction_dates(result: "AIAnalysisResult", sheet_text: str) -> "AIAnalysisResult":
+    """
+    Same guard for the /analyze endpoint's recentTransactions dates.
+    """
+    import re as _re4
+
+    sheet_years: set[str] = set(_re4.findall(r'\b(20\d{2})\b', sheet_text))
+    if not result.recentTransactions:
+        return result
+
+    for tx in result.recentTransactions:
+        if not tx.date:
+            continue
+        date_years = set(_re4.findall(r'\b(20\d{2})\b', tx.date))
+        if date_years and not date_years.intersection(sheet_years):
+            tx.date = None
+
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# Sheet structure detector                                                     #
+# --------------------------------------------------------------------------- #
+
+def _detect_sheet_structure(content: bytes, filename: str) -> str:
+    """
+    Scan the first ~20 rows of the spreadsheet and build a plain-English
+    'DETECTED STRUCTURE' block that describes:
+      - Which columns appear to be Owner/Client-side vs BDD/Company-side
+      - Which rows appear to be date/round headers
+      - How many negotiation rounds were found
+    This is injected at the top of the prompt so the AI has a structural
+    guide before it reads the raw cell dump.
+    """
+    import re as _re
+
+    lower = filename.lower()
+    if not lower.endswith(".xlsx") and not lower.endswith(".xls"):
+        return ""  # CSV: flat structure, no need for a guide
+
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    except Exception:
+        return ""
+
+    lines: list[str] = []
+    for sheet_name in wb.sheetnames[:3]:  # check up to 3 sheets
+        ws = wb[sheet_name]
+        grid: list[list[str]] = []
+        for i, row in enumerate(ws.iter_rows(max_row=30, values_only=True)):
+            cells = []
+            for c in row[:50]:
+                if c is None:
+                    cells.append("")
+                elif isinstance(c, datetime):
+                    cells.append(c.strftime("%Y-%m-%d"))
+                elif isinstance(c, date_type):
+                    cells.append(c.strftime("%Y-%m-%d"))
+                else:
+                    cells.append(str(c).strip())
+            grid.append(cells)
+            if i >= 29:
+                break
+
+        if not grid:
+            continue
+
+        # Detect Owner/BDD side-header row
+        owner_cols: list[int] = []
+        bdd_cols: list[int] = []
+        side_row_idx = -1
+        date_row_idx = -1
+
+        for ri, row in enumerate(grid):
+            owner_hits = [(ci, c) for ci, c in enumerate(row) if _re.search(r'\b(owner|client|lessee|buyer)\b', c.lower())]
+            bdd_hits = [(ci, c) for ci, c in enumerate(row) if _re.search(r'\b(company|bdd|broker|lessor|seller)\b', c.lower())]
+            if len(owner_hits) >= 2 and len(bdd_hits) >= 2:
+                side_row_idx = ri
+                owner_cols = [ci for ci, _ in owner_hits]
+                bdd_cols = [ci for ci, _ in bdd_hits]
+                break
+
+        # Detect date row (within 5 rows above side_row, or first row with ≥2 date-like values)
+        if side_row_idx > 0:
+            for ri in range(max(0, side_row_idx - 5), side_row_idx):
+                date_count = sum(
+                    1 for c in grid[ri]
+                    if c and (_re.search(r'\d{4}', c) or _re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', c.lower()))
+                )
+                if date_count >= 2:
+                    date_row_idx = ri
+                    break
+
+        if side_row_idx < 0:
+            continue  # no negotiation structure found
+
+        num_rounds = min(len(owner_cols), len(bdd_cols))
+        lines.append(f"Sheet '{sheet_name}':")
+        lines.append(f"  - Negotiation header row: row {side_row_idx + 1}")
+        lines.append(f"  - Rounds detected: {num_rounds}")
+        lines.append(f"  - Owner/Client columns (0-indexed): {owner_cols[:num_rounds]}")
+        lines.append(f"  - BDD/Company columns (0-indexed): {bdd_cols[:num_rounds]}")
+
+        if date_row_idx >= 0:
+            date_labels = [grid[date_row_idx][oc] for oc in owner_cols[:num_rounds] if oc < len(grid[date_row_idx])]
+            date_labels = [d for d in date_labels if d]
+            if date_labels:
+                lines.append(f"  - Round dates found: {date_labels}")
+        lines.append(f"  - Columns go LEFT→RIGHT = oldest round → most recent round")
+
+    wb.close()
+
+    if not lines:
+        return ""
+    return "=== DETECTED SPREADSHEET STRUCTURE (use this as a reading guide) ===\n" + "\n".join(lines) + "\n\n"
+
+
 # --------------------------------------------------------------------------- #
 # File → plain-text helpers                                                   #
 # --------------------------------------------------------------------------- #
@@ -207,6 +376,11 @@ def _enforce_agreed_on_match(result: AIComparisonResult) -> AIComparisonResult:
 def _cell_to_str(cell) -> str:
     if cell is None:
         return ""
+    # Handle datetime/date objects from Excel date-formatted cells
+    if isinstance(cell, datetime):
+        return cell.strftime("%Y-%m-%d")
+    if isinstance(cell, date_type):
+        return cell.strftime("%Y-%m-%d")
     # For numeric cells: detect rate/percentage values (0 < val < 1, ≤ 4 decimal places)
     if isinstance(cell, float) and 0 < cell < 1:
         # Round to avoid floating point noise, display as percentage
@@ -222,26 +396,66 @@ def _cell_to_str(cell) -> str:
 
 def _extract_xlsx_text(content: bytes) -> str:
     """
-    Complete raw extraction — dumps every non-empty cell verbatim so the AI
-    has the full spreadsheet content and cannot hallucinate missing data.
+    Extracts every cell verbatim, with one critical improvement over read_only mode:
+    merged cells are expanded so every cell in a merged range carries the value
+    (not just the top-left corner cell).
+
+    This is essential for typical nego Excels where date headers like "Jan 2025"
+    are merged across the Owner + BDD columns — without expansion, those dates
+    appear only once and the AI cannot tell which round they belong to.
+
+    Output is a pipe-separated table with explicit column numbers so the AI
+    can count columns without ambiguity:
+      [R1]  Col1: value | Col2: value | Col3: value ...
     """
-    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    # Load in normal mode (not read_only) so merged_cells.ranges is available
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    except Exception:
+        # Corrupted or password-protected — fall back to read_only
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+
     sheets_text: list[str] = []
 
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        rows_text: list[str] = []
 
-        for i, row in enumerate(ws.iter_rows(max_row=500, values_only=True)):
-            if i >= 499:
-                break
-            cells = [_cell_to_str(c) for c in row[:50]]
+        # ------------------------------------------------------------------ #
+        # Build a 2-D grid with merged-cell values expanded
+        # ------------------------------------------------------------------ #
+        max_row = min(ws.max_row or 500, 500)
+        max_col = min(ws.max_column or 50, 50)
+
+        # Fill grid with plain cell values
+        grid: list[list[str]] = [[""] * max_col for _ in range(max_row)]
+        for row in ws.iter_rows(min_row=1, max_row=max_row, max_col=max_col):
+            for cell in row:
+                r, c = cell.row - 1, cell.column - 1  # convert to 0-based
+                if 0 <= r < max_row and 0 <= c < max_col:
+                    grid[r][c] = _cell_to_str(cell.value)
+
+        # Expand merged cell values across the full merge range
+        if hasattr(ws, 'merged_cells'):
+            for merge_range in ws.merged_cells.ranges:
+                top_val = grid[merge_range.min_row - 1][merge_range.min_col - 1]
+                for r in range(merge_range.min_row - 1, min(merge_range.max_row, max_row)):
+                    for c in range(merge_range.min_col - 1, min(merge_range.max_col, max_col)):
+                        grid[r][c] = top_val
+
+        # ------------------------------------------------------------------ #
+        # Emit rows as  Col1: value | Col2: value  (skip fully-empty rows)
+        # ------------------------------------------------------------------ #
+        rows_text: list[str] = []
+        for ri, row in enumerate(grid):
             # Trim trailing empty cells
-            while cells and not cells[-1]:
-                cells.pop()
-            if not any(cells):
+            trimmed = row[:]
+            while trimmed and not trimmed[-1]:
+                trimmed.pop()
+            if not any(trimmed):
                 continue
-            rows_text.append("\t".join(cells))
+            # Pipe-separated with 1-based column labels
+            parts = [f"Col{ci + 1}: {v}" for ci, v in enumerate(trimmed) if v]
+            rows_text.append(f"[R{ri + 1}]  " + " | ".join(parts))
 
         if rows_text:
             sheets_text.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows_text))
@@ -596,6 +810,13 @@ come directly from the spreadsheet data below. Do NOT invent, assume, or extrapo
 If a field has no data in the spreadsheet, leave it null or omit it. \
 If the spreadsheet content is insufficient to produce a meaningful analysis, set useful=false.
 
+⚠️  DATE GROUNDING RULE (CRITICAL — violations will break the product):
+- Dates you output MUST appear verbatim (or in an unambiguous equivalent form) in the spreadsheet text above.
+- Do NOT guess, infer, or fill in dates from your training knowledge or pattern-matching.
+- If the spreadsheet shows 2025 or 2026 dates, do NOT output 2023 or any other year not present.
+- If you cannot find an explicit date in the spreadsheet, set the date field to null.
+- Wrong dates are worse than null — prefer null over an invented date.
+
 SPREADSHEET CONTENT:
 {sheet_text}
 
@@ -684,6 +905,13 @@ come directly from the spreadsheet data below. Do NOT invent, assume, or extrapo
 If a field has no data in the spreadsheet, leave it null or omit it. \
 If the spreadsheet content is insufficient to produce a meaningful analysis, set useful=false.
 
+⚠️  DATE GROUNDING RULE (CRITICAL — violations will break the product):
+- Dates you output MUST appear verbatim (or in an unambiguous equivalent form) in the spreadsheet text above.
+- Do NOT guess, infer, or fill in dates from your training knowledge or pattern-matching.
+- If the spreadsheet shows 2025 or 2026 dates, do NOT output 2023 or any other year not present.
+- If you cannot find an explicit date in the spreadsheet for an item, set agreed_date / date to null.
+- Wrong dates are worse than null — prefer null over an invented date.
+
 IMPORTANT — HOW TO READ THE DATA:
 - Columns are ordered LEFT → RIGHT = OLDEST round → LATEST/MOST RECENT round.
 - Each negotiation round has two columns: [Owner/Client Side] and [Company/BDD Side].
@@ -738,10 +966,11 @@ and what is still blocking progress",
       "client_offer": "string — the exact client counter-offer or position with values",
       "status": "agreed | negotiating",
       "agreed_date": "string or null — The date when both sides converged on the same value. \
-Look for the date column/row where both BDD and client show matching values. \
+Look for the date column/row in the spreadsheet where both BDD and client show matching values. \
 If the client proposed a value on 05/27 and BDD matched it on 05/28, agreed_date = '05/28'. \
 Use the LATER of the two dates (i.e. when the second party accepted). \
-Set to null only if no date can be inferred from the spreadsheet.",
+IMPORTANT: set to null unless a specific date is EXPLICITLY VISIBLE in the spreadsheet text — \
+do NOT infer, guess, or fabricate a date. A null is always better than an invented date.",
       "final_value": "string or null — the exact agreed value (ONLY when status=agreed)",
       "notes": "string or null — important context, conditions, or blockers for this item"
     }}
@@ -791,11 +1020,12 @@ if any key term is unresolved.
 """
 
 
-async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparisonResult:
+async def _call_gemini_comparison(sheet_text: str, api_key: str, structure_guide: str = "") -> AIComparisonResult:
     """Call Gemini REST API with the comparison prompt and return parsed AIComparisonResult."""
     import httpx
 
-    print(f"📄 Sending {len(sheet_text)} chars to Gemini comparison. Preview:\n{sheet_text[:800]}\n---")
+    full_text = (structure_guide + sheet_text) if structure_guide else sheet_text
+    print(f"📄 Sending {len(full_text)} chars to Gemini comparison. Preview:\n{full_text[:800]}\n---")
 
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
@@ -804,13 +1034,16 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparison
     payload = {
         "system_instruction": {"parts": [{"text": _COMPARISON_SYSTEM_INSTRUCTION}]},
         "contents": [
-            {"parts": [{"text": _COMPARISON_PROMPT_TEMPLATE.format(sheet_text=sheet_text)}]}
+            {"parts": [{"text": _COMPARISON_PROMPT_TEMPLATE.format(sheet_text=full_text)}]}
         ],
         "generationConfig": {
             "temperature": 0.1,
             "responseMimeType": "application/json",
             "maxOutputTokens": 65536,
-            "thinkingConfig": {"thinkingBudget": 15000},
+            # thinkingBudget: Gemini 2.5 Pro extended thinking helps it reason through
+            # complex multi-round negotiation tables.  24 000 tokens is enough for deep
+            # reasoning on most sheets without hitting the 32 000 cap.
+            "thinkingConfig": {"thinkingBudget": 24000},
         },
     }
 
@@ -856,7 +1089,7 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
             "temperature": 0.1,
             "responseMimeType": "application/json",
             "maxOutputTokens": 65536,
-            "thinkingConfig": {"thinkingBudget": 15000},
+            "thinkingConfig": {"thinkingBudget": 24000},
         },
     }
 
@@ -926,7 +1159,9 @@ async def analyze_negotiation_file(
         return AIAnalysisResult(useful=False, reason="The uploaded file appears to be empty.")
 
     try:
-        return await _call_gemini(sheet_text, api_key)
+        ai_result = await _call_gemini(sheet_text, api_key)
+        ai_result = _strip_hallucinated_transaction_dates(ai_result, sheet_text)
+        return ai_result
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -997,6 +1232,7 @@ async def upload_and_analyze(
     # Call Gemini AI
     try:
         ai_result = await _call_gemini(sheet_text, api_key)
+        ai_result = _strip_hallucinated_transaction_dates(ai_result, sheet_text)
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1093,11 +1329,15 @@ async def upload_for_property(
             detail="The uploaded file appears to be empty.",
         )
 
+    # Build structure guide so the AI understands column layout before reading the raw dump
+    structure_guide = _detect_sheet_structure(content, filename)
+
     # Call Gemini AI with comparison prompt first — before touching the DB
     try:
-        ai_result = await _call_gemini_comparison(sheet_text, api_key)
+        ai_result = await _call_gemini_comparison(sheet_text, api_key, structure_guide)
         ai_result = _deduplicate_items(ai_result)
         ai_result = _enforce_agreed_on_match(ai_result)
+        ai_result = _strip_hallucinated_dates(ai_result, sheet_text)
     except HTTPException:
         raise  # let 502/503 from Gemini propagate with its real detail
     except json.JSONDecodeError as exc:
