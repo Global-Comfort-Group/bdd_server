@@ -334,13 +334,27 @@ def _detect_sheet_structure(content: bytes, filename: str) -> str:
                 bdd_cols = [ci for ci, _ in bdd_hits]
                 break
 
-        # Detect date row (within 5 rows above side_row, or first row with ≥2 date-like values)
+        # Detect date row: look within 5 rows above side_row for a row that has
+        # ≥2 REAL date values — a real date must contain a 20XX year OR a month name
+        # paired with a year.  Plain 4-digit sequences like phone numbers are excluded.
+        def _is_real_date(v: str) -> bool:
+            if not v:
+                return False
+            # ISO date or year 20XX
+            if _re.search(r'\b20\d{2}\b', v):
+                return True
+            # Month name (written out) — only count if it also has a digit nearby
+            if _re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\b', v.lower()) \
+                    and _re.search(r'\d', v):
+                return True
+            # MM/DD/YYYY or DD/MM/YYYY style
+            if _re.search(r'\b\d{1,2}/\d{1,2}/\d{4}\b', v):
+                return True
+            return False
+
         if side_row_idx > 0:
             for ri in range(max(0, side_row_idx - 5), side_row_idx):
-                date_count = sum(
-                    1 for c in grid[ri]
-                    if c and (_re.search(r'\d{4}', c) or _re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', c.lower()))
-                )
+                date_count = sum(1 for c in grid[ri] if _is_real_date(c))
                 if date_count >= 2:
                     date_row_idx = ri
                     break
@@ -348,18 +362,23 @@ def _detect_sheet_structure(content: bytes, filename: str) -> str:
         if side_row_idx < 0:
             continue  # no negotiation structure found
 
-        num_rounds = min(len(owner_cols), len(bdd_cols))
+        # Pair owner and BDD columns — they should alternate in the same row.
+        # Cap at 15 rounds to avoid bloating the prompt with noise.
+        num_rounds = min(len(owner_cols), len(bdd_cols), 15)
         lines.append(f"Sheet '{sheet_name}':")
         lines.append(f"  - Negotiation header row: row {side_row_idx + 1}")
         lines.append(f"  - Rounds detected: {num_rounds}")
-        lines.append(f"  - Owner/Client columns (0-indexed): {owner_cols[:num_rounds]}")
-        lines.append(f"  - BDD/Company columns (0-indexed): {bdd_cols[:num_rounds]}")
+        lines.append(f"  - Owner/Client columns (1-indexed): {[c + 1 for c in owner_cols[:num_rounds]]}")
+        lines.append(f"  - BDD/Company columns (1-indexed): {[c + 1 for c in bdd_cols[:num_rounds]]}")
 
         if date_row_idx >= 0:
             date_labels = [grid[date_row_idx][oc] for oc in owner_cols[:num_rounds] if oc < len(grid[date_row_idx])]
-            date_labels = [d for d in date_labels if d]
+            # Only include values that are genuine dates
+            date_labels = [d for d in date_labels if _is_real_date(d)]
             if date_labels:
-                lines.append(f"  - Round dates found: {date_labels}")
+                lines.append(f"  - Round dates: {date_labels}")
+            else:
+                lines.append(f"  - Round dates: not found in header rows (look for dates in the raw data)")
         lines.append(f"  - Columns go LEFT→RIGHT = oldest round → most recent round")
 
     wb.close()
@@ -528,7 +547,11 @@ def _UNUSED_extract_xlsx_text_structured(content: bytes) -> str:
             for ri in range(side_row_idx - 1, max(side_row_idx - 4, -1), -1):
                 date_count = sum(
                     1 for c in grid[ri]
-                    if c and (_re.search(r'\d{4}', c) or _re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', c.lower()))
+                    if c and (
+                        _re.search(r'\b20\d{2}\b', c) or
+                        (_re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\b', c.lower()) and _re.search(r'\d', c)) or
+                        _re.search(r'\b\d{1,2}/\d{1,2}/\d{4}\b', c)
+                    )
                 )
                 if date_count >= 2:
                     date_row_idx = ri
