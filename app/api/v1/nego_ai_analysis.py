@@ -1057,8 +1057,15 @@ do NOT infer, guess, or fabricate a date. A null is always better than an invent
 
 === RULES ===
 - Read EVERY row and column — do not skip any negotiation topic.
-- Extract ALL topics: Costing, Payment Method, Payment Schedule, Lease Term, Security Deposit, \
-Advance Rent, Escalation, Move-in Date, Orientation, Parking, Fit-out, and any others present.
+- Extract ALL negotiation topics — for LEASE deals this includes but is not limited to: \
+Monthly Rent, Area Rate, Security Deposit, Advance Rent, Lease Term, Escalation Rate, Escalation Start, \
+Payment Terms, Grace Period, Fit-out Period, Free Rental, Parking, Renovation Budget, Move-in Date, \
+Orientation, Commission. \
+For SALE deals this includes but is not limited to: Sale Price, Total Contract Price, Payment Scheme, \
+Down Payment, Spot Down Payment, Installment Terms, Balance Payment, Tax Allocation, Transfer of Title, \
+Commission, Move-in Date. \
+Include ANY row where the Owner/Client column OR the BDD/Company column contains a specific value, \
+figure, rate, term, or condition — even if the label does not appear in the examples above.
 - **ONE ROW PER TOPIC** — Each negotiation topic must appear EXACTLY ONCE in negotiation_items. \
 Do NOT create separate rows for "Initial Offer" and "Latest Position" of the same topic. \
 Do NOT append "(Initial Offer)", "(Latest Position)", "(Round 1)", etc. to the title. \
@@ -1080,10 +1087,13 @@ meeting type, or company name
   * Row labels that are property/deal identifiers: "Client", "Owner", "Tenant", \
 "Location", "Property", "Venue", "Unit", "Floor", "Building", "Type"
   * Row labels that are note fields: "Notes", "Remarks", "Comments"
-  * ONLY include rows that are actual financial or contractual negotiation terms: \
-Monthly Rent, Security Deposit, Advance Rent, Lease Term, Escalation Rate, \
-Escalation Start, Payment Terms, Grace Period, Fit-out Period, Free Rental, \
-Parking, Renovation Budget, Move-in Date, and similar quantifiable deal terms.
+  * INCLUDE every row where either the Owner/Client column or the BDD/Company column \
+contains a value (a number, amount, rate, term length, condition, or option). \
+Even if a row label is unfamiliar, if it has negotiated values on both sides (or at least one side), \
+include it. \
+  * EXCLUDE a row ONLY when it is pure metadata with NO negotiated values — \
+e.g. rows where both sides are empty, or where the row is just a section divider or category header \
+with no values at all.
 - status must be exactly "agreed" or "negotiating" — no other values allowed.
 - agreed_date: for agreed items, find the date in the spreadsheet when both values matched. \
   Use the later date (when the second party accepted). If the spreadsheet has date columns or \
