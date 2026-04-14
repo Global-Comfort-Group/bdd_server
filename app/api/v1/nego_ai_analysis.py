@@ -276,120 +276,236 @@ def _strip_hallucinated_transaction_dates(result: "AIAnalysisResult", sheet_text
 # Sheet structure detector                                                     #
 # --------------------------------------------------------------------------- #
 
-def _detect_sheet_structure(content: bytes, filename: str, target_sheet_hint: str = "") -> str:
+def _build_nego_summary(content: bytes, property_name: str = "") -> str:
     """
-    Scan the first ~20 rows of the spreadsheet and build a plain-English
-    'DETECTED STRUCTURE' block that describes:
-      - Which columns appear to be Owner/Client-side vs BDD/Company-side
-      - Which rows appear to be date/round headers
-      - How many negotiation rounds were found
-    This is injected at the top of the prompt so the AI has a structural
-    guide before it reads the raw cell dump.
+    Builds a compact LATEST POSITIONS SUMMARY from the negotiation Excel.
+
+    This replaces the old _detect_sheet_structure approach which produced
+    broken column pairs (e.g. BDD cols 3,4,5 all paired with a single owner
+    col 2) that confused the AI.
+
+    Algorithm:
+    1. Load the sheet in normal mode (merged cells expanded).
+    2. Detect the Owner/BDD header row.
+    3. Pair columns using PROXIMITY: for each Owner col, its BDD col is the
+       first BDD col that falls BEFORE the next Owner col.
+    4. For each data row, extract the rightmost non-empty Owner value and
+       rightmost non-empty BDD value (= latest positions).
+    5. Emit a clean table the AI can parse directly.
     """
     import re as _re
 
-    lower = filename.lower()
-    if not lower.endswith(".xlsx") and not lower.endswith(".xls"):
-        return ""  # CSV: flat structure, no need for a guide
-
-    try:
-        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    except Exception:
+    lower = property_name.lower() if property_name else ""
+    if not content:
         return ""
 
-    # If a hint is provided, only analyse the matching sheet
-    target = _find_best_sheet(list(wb.sheetnames), target_sheet_hint)
-    sheets_to_check = [target] if target else list(wb.sheetnames)[:3]
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    except Exception:
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        except Exception:
+            return ""
 
-    lines: list[str] = []
+    target = _find_best_sheet(list(wb.sheetnames), property_name)
+    sheets_to_check = [target] if target else [wb.active.title] if wb.active else list(wb.sheetnames)[:1]
+
+    result_parts: list[str] = []
+
     for sheet_name in sheets_to_check:
         ws = wb[sheet_name]
-        grid: list[list[str]] = []
-        for i, row in enumerate(ws.iter_rows(max_row=30, values_only=True)):
-            cells = []
-            for c in row[:50]:
-                if c is None:
-                    cells.append("")
-                elif isinstance(c, datetime):
-                    cells.append(c.strftime("%Y-%m-%d"))
-                elif isinstance(c, date_type):
-                    cells.append(c.strftime("%Y-%m-%d"))
-                else:
-                    cells.append(str(c).strip())
-            grid.append(cells)
-            if i >= 29:
-                break
+        max_row = min(ws.max_row or 300, 300)
+        max_col = min(ws.max_column or 60, 60)
 
-        if not grid:
-            continue
+        # Build merged-cell-expanded grid
+        grid: list[list[str]] = [[""] * max_col for _ in range(max_row)]
+        for row in ws.iter_rows(min_row=1, max_row=max_row, max_col=max_col):
+            for cell in row:
+                r, c = cell.row - 1, cell.column - 1
+                if 0 <= r < max_row and 0 <= c < max_col:
+                    grid[r][c] = _cell_to_str(cell.value)
+        if hasattr(ws, 'merged_cells'):
+            for mr in ws.merged_cells.ranges:
+                r0, c0 = mr.min_row - 1, mr.min_col - 1
+                if r0 >= max_row or c0 >= max_col:
+                    continue
+                val = grid[r0][c0]
+                for r in range(r0, min(mr.max_row, max_row)):
+                    for c in range(c0, min(mr.max_col, max_col)):
+                        grid[r][c] = val
 
-        # Detect Owner/BDD side-header row
-        owner_cols: list[int] = []
-        bdd_cols: list[int] = []
-        side_row_idx = -1
-        date_row_idx = -1
-
-        for ri, row in enumerate(grid):
-            owner_hits = [(ci, c) for ci, c in enumerate(row) if _re.search(r'\b(owner|client|lessee|buyer)\b', c.lower())]
-            bdd_hits = [(ci, c) for ci, c in enumerate(row) if _re.search(r'\b(company|bdd|broker|lessor|seller)\b', c.lower())]
-            if len(owner_hits) >= 2 and len(bdd_hits) >= 2:
-                side_row_idx = ri
-                owner_cols = [ci for ci, _ in owner_hits]
-                bdd_cols = [ci for ci, _ in bdd_hits]
-                break
-
-        # Detect date row: look within 5 rows above side_row for a row that has
-        # ≥2 REAL date values — a real date must contain a 20XX year OR a month name
-        # paired with a year.  Plain 4-digit sequences like phone numbers are excluded.
-        def _is_real_date(v: str) -> bool:
+        def _is_date_val(v: str) -> bool:
             if not v:
                 return False
-            # ISO date or year 20XX
             if _re.search(r'\b20\d{2}\b', v):
                 return True
-            # Month name (written out) — only count if it also has a digit nearby
-            if _re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\b', v.lower()) \
-                    and _re.search(r'\d', v):
+            if _re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\b', v.lower()) and _re.search(r'\d', v):
                 return True
-            # MM/DD/YYYY or DD/MM/YYYY style
             if _re.search(r'\b\d{1,2}/\d{1,2}/\d{4}\b', v):
                 return True
             return False
 
-        if side_row_idx > 0:
-            for ri in range(max(0, side_row_idx - 5), side_row_idx):
-                date_count = sum(1 for c in grid[ri] if _is_real_date(c))
-                if date_count >= 2:
-                    date_row_idx = ri
-                    break
+        # Find the Owner/BDD side-header row (scan all rows, not just first 30)
+        side_row_idx = -1
+        owner_cols: list[int] = []
+        bdd_cols: list[int] = []
+        for ri, row in enumerate(grid):
+            o_hits = [ci for ci, c in enumerate(row) if _re.search(r'\b(owner|client|lessee|buyer)\b', c.lower())]
+            b_hits = [ci for ci, c in enumerate(row) if _re.search(r'\b(company|bdd|broker|lessor|seller)\b', c.lower())]
+            if len(o_hits) >= 2 and len(b_hits) >= 2:
+                side_row_idx = ri
+                owner_cols = sorted(o_hits)
+                bdd_cols = sorted(b_hits)
+                break
 
-        if side_row_idx < 0:
-            continue  # no negotiation structure found
+        if side_row_idx < 0 or not owner_cols or not bdd_cols:
+            wb.close()
+            return ""
 
-        # Pair owner and BDD columns — they should alternate in the same row.
-        # Cap at 15 rounds to avoid bloating the prompt with noise.
-        num_rounds = min(len(owner_cols), len(bdd_cols), 15)
-        lines.append(f"Sheet '{sheet_name}':")
-        lines.append(f"  - Negotiation header row: row {side_row_idx + 1}")
-        lines.append(f"  - Rounds detected: {num_rounds}")
-        lines.append(f"  - Owner/Client columns (1-indexed): {[c + 1 for c in owner_cols[:num_rounds]]}")
-        lines.append(f"  - BDD/Company columns (1-indexed): {[c + 1 for c in bdd_cols[:num_rounds]]}")
+        # Find date row (≤5 rows above side_row)
+        date_row: list[str] = [""] * max_col
+        for ri in range(max(0, side_row_idx - 5), side_row_idx):
+            dc = sum(1 for c in grid[ri] if _is_date_val(c))
+            if dc >= 2:
+                date_row = grid[ri]
+                break
 
-        if date_row_idx >= 0:
-            date_labels = [grid[date_row_idx][oc] for oc in owner_cols[:num_rounds] if oc < len(grid[date_row_idx])]
-            # Only include values that are genuine dates
-            date_labels = [d for d in date_labels if _is_real_date(d)]
-            if date_labels:
-                lines.append(f"  - Round dates: {date_labels}")
+        # --- PROXIMITY-BASED column pairing ---
+        # For each Owner col, its BDD col is the first BDD col that falls
+        # BETWEEN it and the next Owner col. Extra BDD cols (remarks, etc.)
+        # are ignored. Owner cols with no BDD before the next Owner are skipped.
+        rounds: list[tuple[int, int, str]] = []  # (owner_ci, bdd_ci, date_label)
+        for idx, oc in enumerate(owner_cols):
+            next_oc = owner_cols[idx + 1] if idx + 1 < len(owner_cols) else max_col
+            bdd_between = [bc for bc in bdd_cols if oc < bc < next_oc]
+            if not bdd_between:
+                continue
+            bc = bdd_between[0]
+            # Find date label at or near the owner column
+            date_label = date_row[oc] if oc < len(date_row) else ""
+            if not date_label:
+                for dc in range(max(0, oc - 2), min(max_col, oc + 3)):
+                    if dc < len(date_row) and _is_date_val(date_row[dc]):
+                        date_label = date_row[dc]
+                        break
+            rounds.append((oc, bc, date_label or f"Round {len(rounds) + 1}"))
+
+        if not rounds:
+            wb.close()
+            return ""
+
+        # Label column: first column before any negotiation columns with descriptive text
+        first_nego_col = min(owner_cols[0], bdd_cols[0])
+        label_ci = 0
+        best_score = -1
+        for ci in range(0, min(first_nego_col, 5)):
+            score = sum(
+                1 for ri in range(side_row_idx + 1, max_row)
+                if ci < len(grid[ri]) and grid[ri][ci] and _re.search(r'[a-zA-Z]', grid[ri][ci])
+            )
+            if score > best_score:
+                best_score = score
+                label_ci = ci
+
+        # Data starts right after the side-header row; skip pure-text sub-header rows
+        data_start = side_row_idx + 1
+        for ri in range(data_start, min(data_start + 5, max_row)):
+            row = grid[ri]
+            round_vals = [row[oc] for oc, _, _ in rounds] + [row[bc] for _, bc, _ in rounds]
+            round_vals = [v for v in round_vals if v]
+            if round_vals and not any(_re.search(r'\d', v) for v in round_vals):
+                data_start = ri + 1  # skip sub-header
             else:
-                lines.append(f"  - Round dates: not found in header rows (look for dates in the raw data)")
-        lines.append(f"  - Columns go LEFT→RIGHT = oldest round → most recent round")
+                break
+
+        # For rightmost-scan (latest value), sort reversed
+        owner_cols_rev = sorted(owner_cols, reverse=True)
+        bdd_cols_rev = sorted(bdd_cols, reverse=True)
+
+        # ── Build the summary table ──────────────────────────────────────────
+        lines: list[str] = []
+        lines.append(f"\n=== NEGOTIATION LATEST POSITIONS: {sheet_name} ===")
+        lines.append("IMPORTANT: This table shows the MOST RECENT offer from each side.")
+        lines.append("If Owner == BDD → status MUST be 'agreed'. If different → 'negotiating'.")
+        lines.append("")
+        header = f"{'ITEM':<36} | {'LATEST OWNER/CLIENT':<28} | {'LATEST BDD/COMPANY':<28} | STATUS"
+        lines.append(header)
+        lines.append("-" * len(header))
+
+        found_items = 0
+        for ri in range(data_start, max_row):
+            row = grid[ri]
+            if not any(row):
+                continue
+
+            # Get label
+            label = row[label_ci] if label_ci < len(row) else ""
+            if not label:
+                for ci in range(0, min(first_nego_col, 6)):
+                    if ci < len(row) and row[ci] and _re.search(r'[a-zA-Z]', row[ci]):
+                        label = row[ci]
+                        break
+            if not label:
+                continue
+
+            # Skip obvious non-negotiation labels
+            ll = label.strip().lower()
+            if _re.match(r'^\d{4}-\d{2}-\d{2}', label):  # ISO date as label
+                continue
+            if _re.match(r'^\d+(\.\d+)?$', label.strip()):  # Pure number
+                continue
+            if ll in ('date', 'notes', 'remarks', 'comments', 'owner', 'client',
+                      'company', 'bdd', 'status', 'by', 'prepared by'):
+                continue
+            # Skip meeting/logistics rows (no BDD value + looks like a meeting note)
+            latest_bdd_quick = next((row[bc] for bc in bdd_cols_rev if bc < len(row) and row[bc]), "")
+            if not latest_bdd_quick and _re.search(r'\b(meeting|visit|site|call|am|pm)\b', ll):
+                continue
+
+            # Latest values (rightmost non-empty)
+            latest_owner = next((row[oc] for oc in owner_cols_rev if oc < len(row) and row[oc]), "")
+            latest_bdd = next((row[bc] for bc in bdd_cols_rev if bc < len(row) and row[bc]), "")
+
+            if not latest_owner and not latest_bdd:
+                continue
+
+            # Agreed/negotiating
+            o_norm = _normalize_for_compare(latest_owner)
+            b_norm = _normalize_for_compare(latest_bdd)
+            if o_norm and b_norm and o_norm == b_norm:
+                status_str = "✓ AGREED"
+            elif latest_owner or latest_bdd:
+                status_str = "✗ NEGOTIATING"
+            else:
+                continue
+
+            # Find agreed date: scan rounds right-to-left for first match
+            agreed_date = ""
+            if status_str == "✓ AGREED":
+                for oc, bc, dlabel in reversed(rounds):
+                    ov = row[oc] if oc < len(row) else ""
+                    bv = row[bc] if bc < len(row) else ""
+                    if ov and bv and _normalize_for_compare(ov) == _normalize_for_compare(bv):
+                        agreed_date = dlabel
+                        break
+
+            date_part = f" | Date: {agreed_date}" if agreed_date else ""
+            lines.append(
+                f"{label[:35]:<36} | {latest_owner[:27]:<28} | {latest_bdd[:27]:<28} | {status_str}{date_part}"
+            )
+            found_items += 1
+
+        if found_items == 0:
+            wb.close()
+            return ""
+
+        lines.append("")
+        lines.append(f"Total items found: {found_items}")
+        lines.append(f"Rounds detected ({len(rounds)}): " + ", ".join(f"{d}" for _, _, d in rounds))
+        result_parts.append("\n".join(lines))
 
     wb.close()
-
-    if not lines:
-        return ""
-    return "=== DETECTED SPREADSHEET STRUCTURE (use this as a reading guide) ===\n" + "\n".join(lines) + "\n\n"
+    return "\n".join(result_parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -991,12 +1107,16 @@ If the spreadsheet content is insufficient to produce a meaningful analysis, set
 - Wrong dates are worse than null — prefer null over an invented date.
 
 IMPORTANT — HOW TO READ THE DATA:
-- Columns are ordered LEFT → RIGHT = OLDEST round → LATEST/MOST RECENT round.
-- Each negotiation round has two columns: [Owner/Client Side] and [Company/BDD Side].
-- Always base bdd_offer and client_offer on the LATEST (rightmost) non-empty values for each item.
-- The "LATEST POSITIONS SUMMARY" section (if present) already shows you the final positions — use it.
-- A "✓ AGREED" marker in the summary means the values match — set status="agreed".
-- A "✗ NEGOTIATING" marker means the values differ — set status="negotiating".
+- At the END of the spreadsheet content below, there is a section called
+  "=== NEGOTIATION LATEST POSITIONS: <sheet name> ===".
+- **START WITH THAT SECTION.** It is a pre-parsed table showing the latest Owner
+  and BDD position for each negotiation item. Use it as your primary source.
+- ✓ AGREED in that table → set status="agreed" for that item.
+- ✗ NEGOTIATING in that table → set status="negotiating" for that item.
+- "Date: <date>" in that table → use it as the agreed_date for agreed items.
+- For any item in that summary table, use the exact values shown as bdd_offer / client_offer.
+- The raw spreadsheet dump above the summary is for grounding and date verification only.
+- Columns go LEFT → RIGHT = OLDEST round → LATEST/MOST RECENT round.
 
 SPREADSHEET CONTENT:
 {sheet_text}
@@ -1108,12 +1228,11 @@ if any key term is unresolved.
 """
 
 
-async def _call_gemini_comparison(sheet_text: str, api_key: str, structure_guide: str = "") -> AIComparisonResult:
+async def _call_gemini_comparison(sheet_text: str, api_key: str) -> AIComparisonResult:
     """Call Gemini REST API with the comparison prompt and return parsed AIComparisonResult."""
     import httpx
 
-    full_text = (structure_guide + sheet_text) if structure_guide else sheet_text
-    print(f"📄 Sending {len(full_text)} chars to Gemini comparison. Preview:\n{full_text[:800]}\n---")
+    print(f"📄 Sending {len(sheet_text)} chars to Gemini comparison. Preview:\n{sheet_text[:800]}\n---")
 
     gemini_url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
@@ -1122,7 +1241,7 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str, structure_guide
     payload = {
         "system_instruction": {"parts": [{"text": _COMPARISON_SYSTEM_INSTRUCTION}]},
         "contents": [
-            {"parts": [{"text": _COMPARISON_PROMPT_TEMPLATE.format(sheet_text=full_text)}]}
+            {"parts": [{"text": _COMPARISON_PROMPT_TEMPLATE.format(sheet_text=sheet_text)}]}
         ],
         "generationConfig": {
             "temperature": 0.1,
@@ -1428,12 +1547,20 @@ async def upload_for_property(
             detail="The uploaded file appears to be empty.",
         )
 
-    # Build structure guide so the AI understands column layout before reading the raw dump
-    structure_guide = _detect_sheet_structure(content, filename, target_sheet_hint=prop_name)
+    # Build a clean LATEST POSITIONS SUMMARY and append it to the raw dump.
+    # This replaces the old broken _detect_sheet_structure (which produced wrong
+    # column pairs and confused the AI). The summary gives Gemini a pre-parsed
+    # table so it does not have to figure out column layout from the raw dump alone.
+    nego_summary = _build_nego_summary(content, property_name=prop_name)
+    if nego_summary:
+        sheet_text = sheet_text + "\n\n" + nego_summary
+        print(f"✅ LATEST POSITIONS SUMMARY appended ({len(nego_summary)} chars)")
+    else:
+        print("⚠️  Could not build LATEST POSITIONS SUMMARY — using raw dump only")
 
     # Call Gemini AI with comparison prompt first — before touching the DB
     try:
-        ai_result = await _call_gemini_comparison(sheet_text, api_key, structure_guide)
+        ai_result = await _call_gemini_comparison(sheet_text, api_key)
         ai_result = _deduplicate_items(ai_result)
         ai_result = _enforce_agreed_on_match(ai_result)
         ai_result = _strip_hallucinated_dates(ai_result, sheet_text)
