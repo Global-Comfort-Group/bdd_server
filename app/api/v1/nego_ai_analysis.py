@@ -437,9 +437,14 @@ def _extract_xlsx_text(content: bytes) -> str:
         # Expand merged cell values across the full merge range
         if hasattr(ws, 'merged_cells'):
             for merge_range in ws.merged_cells.ranges:
-                top_val = grid[merge_range.min_row - 1][merge_range.min_col - 1]
-                for r in range(merge_range.min_row - 1, min(merge_range.max_row, max_row)):
-                    for c in range(merge_range.min_col - 1, min(merge_range.max_col, max_col)):
+                min_r = merge_range.min_row - 1
+                min_c = merge_range.min_col - 1
+                # Skip if the merge origin is outside the capped grid
+                if min_r >= max_row or min_c >= max_col:
+                    continue
+                top_val = grid[min_r][min_c]
+                for r in range(min_r, min(merge_range.max_row, max_row)):
+                    for c in range(min_c, min(merge_range.max_col, max_col)):
                         grid[r][c] = top_val
 
         # ------------------------------------------------------------------ #
