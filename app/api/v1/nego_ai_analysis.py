@@ -1072,6 +1072,9 @@ async def _call_gemini_comparison(sheet_text: str, api_key: str, structure_guide
         )
     result_text = candidate["content"]["parts"][0]["text"]
     result_dict = json.loads(result_text)
+    # Gemini occasionally wraps the object in an array — unwrap it
+    if isinstance(result_dict, list):
+        result_dict = result_dict[0] if result_dict else {}
     return AIComparisonResult(**result_dict)
 
 
@@ -1117,6 +1120,9 @@ async def _call_gemini(sheet_text: str, api_key: str) -> AIAnalysisResult:
         )
     result_text = candidate["content"]["parts"][0]["text"]
     result_dict = json.loads(result_text)
+    # Gemini occasionally wraps the object in an array — unwrap it
+    if isinstance(result_dict, list):
+        result_dict = result_dict[0] if result_dict else {}
     return AIAnalysisResult(**result_dict)
 
 
