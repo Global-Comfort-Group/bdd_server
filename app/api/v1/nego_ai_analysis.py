@@ -276,7 +276,7 @@ def _strip_hallucinated_transaction_dates(result: "AIAnalysisResult", sheet_text
 # Sheet structure detector                                                     #
 # --------------------------------------------------------------------------- #
 
-def _detect_sheet_structure(content: bytes, filename: str) -> str:
+def _detect_sheet_structure(content: bytes, filename: str, target_sheet_hint: str = "") -> str:
     """
     Scan the first ~20 rows of the spreadsheet and build a plain-English
     'DETECTED STRUCTURE' block that describes:
@@ -297,8 +297,12 @@ def _detect_sheet_structure(content: bytes, filename: str) -> str:
     except Exception:
         return ""
 
+    # If a hint is provided, only analyse the matching sheet
+    target = _find_best_sheet(list(wb.sheetnames), target_sheet_hint)
+    sheets_to_check = [target] if target else list(wb.sheetnames)[:3]
+
     lines: list[str] = []
-    for sheet_name in wb.sheetnames[:3]:  # check up to 3 sheets
+    for sheet_name in sheets_to_check:
         ws = wb[sheet_name]
         grid: list[list[str]] = []
         for i, row in enumerate(ws.iter_rows(max_row=30, values_only=True)):
@@ -413,11 +417,16 @@ def _cell_to_str(cell) -> str:
     return v
 
 
-def _extract_xlsx_text(content: bytes) -> str:
+def _extract_xlsx_text(content: bytes, property_name: str = "") -> str:
     """
     Extracts every cell verbatim, with one critical improvement over read_only mode:
     merged cells are expanded so every cell in a merged range carries the value
     (not just the top-left corner cell).
+
+    When property_name is provided (e.g. "Maxx Hotel"), only the sheet whose name
+    best matches that property is extracted.  This is essential for multi-property
+    workbooks (e.g. 16-sheet files) so the AI only sees the relevant sheet and
+    does not read data from a different property.
 
     This is essential for typical nego Excels where date headers like "Jan 2025"
     are merged across the Owner + BDD columns — without expansion, those dates
@@ -434,9 +443,23 @@ def _extract_xlsx_text(content: bytes) -> str:
         # Corrupted or password-protected — fall back to read_only
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
 
+    # Decide which sheets to process
+    target_sheet = _find_best_sheet(wb.sheetnames, property_name)
+    if target_sheet:
+        sheets_to_process = [target_sheet]
+        print(f"📋 Sheet match: property='{property_name}' → sheet='{target_sheet}'")
+    else:
+        # No hint or no match — use active sheet first, then others
+        active_name = wb.active.title if wb.active else None
+        if active_name and active_name in wb.sheetnames:
+            sheets_to_process = [active_name] + [s for s in wb.sheetnames if s != active_name]
+        else:
+            sheets_to_process = wb.sheetnames
+        print(f"📋 No sheet match for '{property_name}' — processing all {len(sheets_to_process)} sheets")
+
     sheets_text: list[str] = []
 
-    for sheet_name in wb.sheetnames:
+    for sheet_name in sheets_to_process:
         ws = wb[sheet_name]
 
         # ------------------------------------------------------------------ #
@@ -804,14 +827,41 @@ def _extract_csv_text(content: bytes) -> str:
     return "\n".join(rows)
 
 
-def _file_to_text(content: bytes, filename: str) -> str:
+def _find_best_sheet(sheetnames: list, hint: str) -> str | None:
+    """
+    Given a property name hint (e.g. 'Maxx Hotel'), return the sheet name
+    that best matches it, or None if no reasonable match is found.
+    Matching is case-insensitive and checks for substring overlap.
+    """
+    if not hint:
+        return None
+    import re as _re
+    # Normalise: lowercase, remove punctuation/extra spaces
+    def _norm(s: str) -> str:
+        return _re.sub(r'[^a-z0-9 ]', ' ', s.lower())
+
+    hint_words = set(_norm(hint).split())
+    best_sheet, best_score = None, 0
+
+    for name in sheetnames:
+        name_words = set(_norm(name).split())
+        overlap = len(hint_words & name_words)
+        if overlap > best_score:
+            best_score = overlap
+            best_sheet = name
+
+    # Require at least one word in common (ignores generic words like "the")
+    return best_sheet if best_score >= 1 else None
+
+
+def _file_to_text(content: bytes, filename: str, property_name: str = "") -> str:
     lower = filename.lower()
     if lower.endswith(".csv"):
         return _extract_csv_text(content)
     elif lower.endswith(".xls"):
         return _extract_xls_text(content)
     else:
-        return _extract_xlsx_text(content)
+        return _extract_xlsx_text(content, property_name=property_name)
 
 
 # --------------------------------------------------------------------------- #
@@ -1346,9 +1396,14 @@ async def upload_for_property(
 
     content = await file.read()
 
-    # Parse spreadsheet to text
+    # Load property name upfront so we can target the correct sheet in multi-sheet workbooks
+    prop_result = await db.execute(select(Property).where(Property.id == property_id))
+    prop = prop_result.scalar_one_or_none()
+    prop_name = prop.name if prop else ""
+
+    # Parse spreadsheet to text — pass property name so only the matching sheet is extracted
     try:
-        sheet_text = _file_to_text(content, filename)
+        sheet_text = _file_to_text(content, filename, property_name=prop_name)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1364,7 +1419,7 @@ async def upload_for_property(
         )
 
     # Build structure guide so the AI understands column layout before reading the raw dump
-    structure_guide = _detect_sheet_structure(content, filename)
+    structure_guide = _detect_sheet_structure(content, filename, target_sheet_hint=prop_name)
 
     # Call Gemini AI with comparison prompt first — before touching the DB
     try:
@@ -1399,9 +1454,7 @@ async def upload_for_property(
     result = await db.execute(select(NegoTable).where(NegoTable.property_id == property_id))
     nego_table = result.scalar_one_or_none()
     if not nego_table:
-        # Load property to seed required NOT NULL fields
-        prop_result = await db.execute(select(Property).where(Property.id == property_id))
-        prop = prop_result.scalar_one_or_none()
+        # prop was already loaded above for sheet matching — reuse it
         prop_name = prop.name if prop else "Unknown"
         prop_address = prop.address if prop else "Unknown"
         prop_type = str(prop.property_type.value) if prop else "Unknown"
