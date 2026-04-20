@@ -166,8 +166,8 @@ private_key.pem
 htmlcov/
 .tox/
 
-# Production deployment
-STAGING_CREDENTIALS.md
+# Documentation (hidden from GitHub)
+docs/
 
 .env.staging
 .env.*
