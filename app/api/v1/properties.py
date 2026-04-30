@@ -75,35 +75,86 @@ async def get_current_user_optional() -> Optional[User]:
 
 @router.get("/")
 async def list_properties(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=2000),
+    # Pagination
+    page: int = Query(1, ge=1),
+    page_size: int = Query(12, ge=1, le=200),
+    # Legacy offset/limit (kept for backwards compatibility)
+    skip: Optional[int] = Query(None, ge=0),
+    limit: Optional[int] = Query(None, ge=1, le=2000),
+    # Filters
+    search: Optional[str] = Query(None, description="Match against property name and address"),
+    statuses: Optional[List[PropertyStatus]] = Query(None),
+    property_types: Optional[List[PropertyType]] = Query(None),
+    transaction_statuses: Optional[List[TransactionStatus]] = Query(None),
+    referred_by: Optional[str] = None,
+    price_min: Optional[float] = Query(None, ge=0),
+    price_max: Optional[float] = Query(None, ge=0),
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    bookmarked_only: bool = False,
+    submitted_by_id: Optional[int] = None,
+    reviewer_id: Optional[int] = None,
+    # Sorting
+    sort_by: str = Query("created_at", regex="^(created_at|name|price|status)$"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
+    # Legacy single-value filters
     status: Optional[PropertyStatus] = None,
     property_type: Optional[PropertyType] = None,
     transaction_status: Optional[TransactionStatus] = None,
-    submitted_by_id: Optional[int] = None,
-    reviewer_id: Optional[int] = None,
     db: AsyncSession = Depends(get_async_session),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """Get list of properties with optional filtering."""
+    """Paginated, filterable list of properties.
+
+    All filtering, sorting, and pagination happens in the database. The response
+    includes the full filtered count so the client can render an accurate page
+    counter without fetching all rows.
+    """
     service = PropertyService(db)
-    
+
     # Non-BDD users can only see their own properties unless they're brokers or admins
-    # If no authentication, allow viewing all properties (for development)
     if current_user and current_user.role.value not in ["BDD_USER", "ADMIN"]:
         if submitted_by_id is None:
             submitted_by_id = current_user.id
         elif submitted_by_id != current_user.id and current_user.role.value != "BROKER":
             raise HTTPException(status_code=403, detail="Not authorized to view other users' properties")
-    
-    properties = await service.get_properties(
-        skip=skip,
-        limit=limit,
-        status=status,
+
+    # Resolve pagination — explicit skip/limit wins, otherwise derive from page/page_size
+    if skip is not None or limit is not None:
+        effective_skip = skip or 0
+        effective_limit = limit or page_size
+    else:
+        effective_skip = (page - 1) * page_size
+        effective_limit = page_size
+
+    # Merge legacy single-value filters into the multi-value lists
+    merged_statuses = [s.value for s in statuses] if statuses else None
+    if status and not merged_statuses:
+        merged_statuses = [status.value]
+    merged_types = [t.value for t in property_types] if property_types else None
+    if property_type and not merged_types:
+        merged_types = [property_type.value]
+    merged_tx = [t.value for t in transaction_statuses] if transaction_statuses else None
+    if transaction_status and not merged_tx:
+        merged_tx = [transaction_status.value]
+
+    properties, total = await service.search_properties(
+        skip=effective_skip,
+        limit=effective_limit,
+        search=search,
+        statuses=merged_statuses,
+        property_types=merged_types,
+        transaction_statuses=merged_tx,
         submitted_by_id=submitted_by_id,
         reviewer_id=reviewer_id,
-        property_type=property_type.value if property_type else None,
-        transaction_status=transaction_status.value if transaction_status else None,
+        referred_by=referred_by,
+        price_min=price_min,
+        price_max=price_max,
+        date_from=date_from,
+        date_to=date_to,
+        bookmarked_only=bookmarked_only,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     
     # Serialize properties to match client expectations
@@ -192,11 +243,15 @@ async def list_properties(
         
         serialized_properties.append(property_dict)
     
+    total_pages = (total + effective_limit - 1) // effective_limit if effective_limit else 1
     return {
         "properties": serialized_properties,
-        "total": len(serialized_properties),
-        "skip": skip,
-        "limit": limit
+        "total": total,
+        "page": (effective_skip // effective_limit) + 1 if effective_limit else 1,
+        "page_size": effective_limit,
+        "total_pages": total_pages,
+        "skip": effective_skip,
+        "limit": effective_limit,
     }
 
 
