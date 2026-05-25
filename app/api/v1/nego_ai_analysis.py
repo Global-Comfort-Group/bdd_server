@@ -1840,10 +1840,16 @@ async def get_attachments_for_property(
     if not nego_table:
         return []
 
-    # Return all attachments ordered newest first
+    # Return all attachments ordered newest first, with signed OSS URLs
     attachments_result = await db.execute(
         select(NegotiationChronicleAttachment)
         .where(NegotiationChronicleAttachment.nego_table_id == nego_table.id)
         .order_by(NegotiationChronicleAttachment.created_at.desc())
     )
-    return attachments_result.scalars().all()
+    attachments = attachments_result.scalars().all()
+
+    from app.api.v1.negotiation_chronicles import _sign_attachment_url
+    return [
+        _sign_attachment_url(NegotiationChronicleAttachmentSchema.model_validate(a).model_dump())
+        for a in attachments
+    ]
