@@ -244,7 +244,7 @@ class OSSService:
             Signed URL
         """
         try:
-            return self.public_bucket.sign_url(method, object_key, expires)
+            return self.public_bucket.sign_url(method, object_key, expires, slash_safe=True)
         except OssError as e:
             raise HTTPException(
                 status_code=400,
