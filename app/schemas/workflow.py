@@ -37,6 +37,10 @@ class DuplicateCheckRequest(BaseModel):
     title_number: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    lot_area: Optional[float] = None
+    building_area: Optional[float] = None
+    property_type: Optional[str] = None
+    transaction_status: Optional[str] = None
 
 
 class DuplicateResult(BaseModel):

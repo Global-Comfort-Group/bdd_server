@@ -79,12 +79,12 @@ async def mark_property_as_duplicate(
             duplicate_of_id=original_property_id,
             notes=notes
         )
-        
+
         # Notify the property owner
         from app.services.notification import NotificationService
         from app.schemas.notification import NotificationCreate
         from app.models.notification import NotificationType
-        
+
         notification_service = NotificationService(db)
         notification_data = NotificationCreate(
             user_id=duplicate_property.submitted_by_id,
@@ -100,7 +100,27 @@ async def mark_property_as_duplicate(
             duplicate_property_id=original_property_id
         )
         await notification_service.create_notification(notification_data, send_email=True)
-        
+
+        # Fan out an in-app-only alert to all admins + BDD users so they can
+        # review the click-through. No email — keeps the staff inbox clean.
+        try:
+            submitter = duplicate_property.submitted_by
+            submitter_name = (
+                f"{submitter.first_name} {submitter.last_name}".strip()
+                if submitter else f"User #{duplicate_property.submitted_by_id}"
+            )
+            await duplicate_service.notify_staff_of_duplicate(
+                new_property_id=property_id,
+                new_property_name=duplicate_property.name,
+                original_property_id=original_property_id,
+                original_property_name=original_property.name,
+                submitter_name=submitter_name,
+                match_reasons=[notes] if notes else [],
+                proceeded_despite_warning=True,
+            )
+        except Exception as e:
+            print(f"⚠️  Staff duplicate notification fan-out failed: {e}")
+
         return {
             "message": f"Property {property_id} marked as duplicate of property {original_property_id}",
             "duplicate_property": updated_property,

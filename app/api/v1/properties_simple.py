@@ -722,6 +722,35 @@ async def create_property(
 
     print(f"✅ PROPERTY CREATED SUCCESSFULLY - DB ID: {new_property['id']}")
 
+    # Auto-detect duplicates AFTER save: if the just-submitted property matches
+    # an existing one under the four-rule check, fan out an in-app-only alert
+    # to all admins + BDD users. This catches submissions where the warning
+    # dialog was bypassed (e.g. mobile, slow network) or the rule fires post-hoc
+    # because the submitter edited fields after the warning.
+    try:
+        from app.services.duplicate import DuplicateDetectionService
+        dup_service = DuplicateDetectionService(db)
+        # property_create was built earlier in this handler — re-use it.
+        dup_results = await dup_service.check_duplicates(property_create)
+        if dup_results:
+            best = dup_results[0]
+            original = await property_service.get_property(best.property_id)
+            if original:
+                submitter_name = f"{current_user.first_name} {current_user.last_name}".strip()
+                await dup_service.notify_staff_of_duplicate(
+                    new_property_id=int(new_property['id']),
+                    new_property_name=new_property['name'],
+                    original_property_id=original.id,
+                    original_property_name=original.name,
+                    submitter_name=submitter_name,
+                    match_reasons=best.match_reasons,
+                    similarity_score=best.similarity_score,
+                    proceeded_despite_warning=False,
+                )
+    except Exception as e:
+        # Never block submission on a notification failure
+        print(f"⚠️  Auto-detect duplicate notification failed: {e}")
+
     # Log activity
     try:
         await log_activity(

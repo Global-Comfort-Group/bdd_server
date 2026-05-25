@@ -14,7 +14,24 @@ from app.schemas.negotiation_chronicle import (
 )
 from app.services.file_parser import parse_negotiation_file
 from app.services.file_storage import file_storage_service
+from app.services.oss_service import get_oss_service
 import os
+
+
+def _sign_attachment_url(attachment_data: dict) -> dict:
+    """Replace file_url with a signed OSS URL so private-bucket downloads work."""
+    file_url = attachment_data.get("file_url") or ""
+    if not file_url or file_url.startswith("https://docs.google.com") or file_url.startswith("http://docs.google.com"):
+        return attachment_data
+    try:
+        oss = get_oss_service()
+        object_key = oss.object_key_from_url(file_url)
+        if object_key:
+            attachment_data = dict(attachment_data)
+            attachment_data["file_url"] = oss.generate_signed_url(object_key, expires=3600)
+    except Exception:
+        pass
+    return attachment_data
 
 router = APIRouter()
 
@@ -176,10 +193,9 @@ async def get_negotiation_chronicle_attachments(
     
     if nego_table_id in CREATED_NEGO_TABLES:
         print(f"✅ Found nego table {nego_table_id} in memory storage")
-        # For in-memory nego tables, return attachments from memory
         attachments = NEGO_TABLE_ATTACHMENTS.get(nego_table_id, [])
         print(f"📊 Found {len(attachments)} attachments in memory")
-        return attachments
+        return [_sign_attachment_url(a) for a in attachments]
     
     # Try database (for production-created nego tables)
     result = await db.execute(select(NegoTable).filter(NegoTable.id == nego_table_id))
@@ -199,9 +215,13 @@ async def get_negotiation_chronicle_attachments(
         .order_by(NegotiationChronicleAttachment.created_at.desc())
     )
     attachments = result.scalars().all()
-    
+
     print(f"📊 Found {len(attachments)} attachments")
-    return attachments
+    serialized = [
+        _sign_attachment_url(NegotiationChronicleAttachmentSchema.model_validate(a).model_dump())
+        for a in attachments
+    ]
+    return serialized
 
 @router.delete("/{attachment_id}")
 async def delete_negotiation_chronicle_attachment(
