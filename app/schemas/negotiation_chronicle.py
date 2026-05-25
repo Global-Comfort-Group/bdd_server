@@ -34,6 +34,10 @@ class NegotiationChronicleAttachment(NegotiationChronicleAttachmentBase):
     created_at: Union[datetime, str]  # Accept both datetime objects and ISO strings
     updated_at: Union[datetime, str, None] = None  # Accept both datetime objects and ISO strings
     ai_result: Optional[Dict[str, Any]] = None  # Full Gemini AI analysis result (timeline mode)
+    analysis_status: str = "PENDING"  # PENDING | ANALYZING | COMPLETED | FAILED
+    analyzed_at: Union[datetime, str, None] = None
+    analysis_error: Optional[str] = None
+    file_sha256: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -1,11 +1,12 @@
 import io
 import csv
+import hashlib
 import json
 from datetime import datetime, date as date_type
 from typing import Optional, List
 
 import openpyxl
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,8 +91,17 @@ class AIComparisonResult(BaseModel):
 
 class UploadForPropertyResponse(BaseModel):
     attachment_id: int
-    ai_result: AIComparisonResult
     nego_table_id: int
+    analysis_status: str = "PENDING"  # PENDING | ANALYZING | COMPLETED | FAILED
+    ai_result: Optional[AIComparisonResult] = None  # only present if analyze=true was passed
+
+
+class AnalyzeAttachmentResponse(BaseModel):
+    attachment_id: int
+    nego_table_id: int
+    analysis_status: str
+    ai_result: AIComparisonResult
+    analyzed_at: Optional[datetime] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -1494,43 +1504,53 @@ async def upload_and_analyze(
     )
 
 
-@router.post("/upload-for-property/{property_id}", response_model=UploadForPropertyResponse)
-async def upload_for_property(
+async def _get_or_create_nego_table(
     property_id: int,
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Upload a negotiation file for a property. Auto-creates a NegoTable if one doesn't exist.
-    Runs Gemini AI comparison analysis (BDD Employee vs Client per item) and saves to DB.
-    Only BDD_USER (assigned reviewer) and ADMIN may upload.
-    """
+    db: AsyncSession,
+    current_user: User,
+    prop: Optional[Property],
+) -> NegoTable:
     from app.models.nego_table import NegoTableStatus
 
-    api_key = settings.GOOGLE_GEMINI_API_KEY
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI analysis is not configured on this server (missing GOOGLE_GEMINI_API_KEY).",
-        )
+    result = await db.execute(select(NegoTable).where(NegoTable.property_id == property_id))
+    nego_table = result.scalar_one_or_none()
+    if nego_table:
+        return nego_table
 
-    filename = file.filename or ""
-    lower = filename.lower()
-    if not any(lower.endswith(ext) for ext in (".xlsx", ".xls", ".csv")):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file type. Please upload .xlsx, .xls, or .csv",
-        )
+    prop_name = prop.name if prop else "Unknown"
+    prop_address = prop.address if prop else "Unknown"
+    prop_type = str(prop.property_type.value) if prop else "Unknown"
+    prop_lot_area = float(prop.lot_area) if prop else 0.0
 
-    content = await file.read()
+    nego_table = NegoTable(
+        property_id=property_id,
+        status=NegoTableStatus.ACTIVE,
+        created_by_id=current_user.id,
+        referred_date=datetime.utcnow(),
+        source_origin="Upload",
+        original_property_name=prop_name,
+        current_property_name=prop_name,
+        original_location=prop_address,
+        current_location=prop_address,
+        original_property_type=prop_type,
+        current_property_type=prop_type,
+        original_lot_area=prop_lot_area,
+        current_lot_area=prop_lot_area,
+    )
+    db.add(nego_table)
+    await db.commit()
+    await db.refresh(nego_table)
+    print(f"✅ Auto-created NegoTable {nego_table.id} for property {property_id}")
+    return nego_table
 
-    # Load property name upfront so we can target the correct sheet in multi-sheet workbooks
-    prop_result = await db.execute(select(Property).where(Property.id == property_id))
-    prop = prop_result.scalar_one_or_none()
-    prop_name = prop.name if prop else ""
 
-    # Parse spreadsheet to text — pass property name so only the matching sheet is extracted
+async def _run_gemini_on_bytes(
+    content: bytes,
+    filename: str,
+    prop_name: str,
+    api_key: str,
+) -> AIComparisonResult:
+    """Parse spreadsheet bytes, build summary, call Gemini, post-process."""
     try:
         sheet_text = _file_to_text(content, filename, property_name=prop_name)
     except HTTPException:
@@ -1547,77 +1567,48 @@ async def upload_for_property(
             detail="The uploaded file appears to be empty.",
         )
 
-    # Build a clean LATEST POSITIONS SUMMARY and append it to the raw dump.
-    # This replaces the old broken _detect_sheet_structure (which produced wrong
-    # column pairs and confused the AI). The summary gives Gemini a pre-parsed
-    # table so it does not have to figure out column layout from the raw dump alone.
     nego_summary = _build_nego_summary(content, property_name=prop_name)
     if nego_summary:
         sheet_text = sheet_text + "\n\n" + nego_summary
         print(f"✅ LATEST POSITIONS SUMMARY appended ({len(nego_summary)} chars)")
-    else:
-        print("⚠️  Could not build LATEST POSITIONS SUMMARY — using raw dump only")
 
-    # Call Gemini AI with comparison prompt first — before touching the DB
-    try:
-        ai_result = await _call_gemini_comparison(sheet_text, api_key)
-        ai_result = _deduplicate_items(ai_result)
-        ai_result = _enforce_agreed_on_match(ai_result)
-        ai_result = _strip_hallucinated_dates(ai_result, sheet_text)
-    except HTTPException:
-        raise  # let 502/503 from Gemini propagate with its real detail
-    except json.JSONDecodeError as exc:
+    ai_result = await _call_gemini_comparison(sheet_text, api_key)
+    ai_result = _deduplicate_items(ai_result)
+    ai_result = _enforce_agreed_on_match(ai_result)
+    ai_result = _strip_hallucinated_dates(ai_result, sheet_text)
+    return ai_result
+
+
+@router.post("/upload-for-property/{property_id}", response_model=UploadForPropertyResponse)
+async def upload_for_property(
+    property_id: int,
+    file: UploadFile = File(...),
+    analyze: bool = Query(False, description="If true, run Gemini analysis inline (legacy). Default false — call /analyze/{attachment_id} separately to control cost."),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upload a negotiation file for a property to OSS and create a PENDING attachment.
+    By default does NOT run Gemini — call POST /analyze/{attachment_id} explicitly to
+    incur the Gemini cost. Pass ?analyze=true for legacy inline-analyze behavior.
+    """
+    filename = file.filename or ""
+    lower = filename.lower()
+    if not any(lower.endswith(ext) for ext in (".xlsx", ".xls", ".csv")):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to parse AI response: {exc}",
-        )
-    except Exception as exc:
-        print(f"💥 Gemini comparison error: {type(exc).__name__}: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"AI analysis failed: {type(exc).__name__}: {exc}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file type. Please upload .xlsx, .xls, or .csv",
         )
 
-    # If Gemini says the file is not negotiation-related, return early — nothing is saved
-    if not ai_result.useful:
-        print(f"⚠️  File '{filename}' rejected by AI for property {property_id}: {ai_result.reason}")
-        return UploadForPropertyResponse(
-            attachment_id=-1,
-            ai_result=ai_result,
-            nego_table_id=-1,
-        )
+    content = await file.read()
+    file_sha256 = hashlib.sha256(content).hexdigest()
 
-    # Get or create NegoTable for this property (only reached when file is useful)
-    result = await db.execute(select(NegoTable).where(NegoTable.property_id == property_id))
-    nego_table = result.scalar_one_or_none()
-    if not nego_table:
-        # prop was already loaded above for sheet matching — reuse it
-        prop_name = prop.name if prop else "Unknown"
-        prop_address = prop.address if prop else "Unknown"
-        prop_type = str(prop.property_type.value) if prop else "Unknown"
-        prop_lot_area = float(prop.lot_area) if prop else 0.0
+    prop_result = await db.execute(select(Property).where(Property.id == property_id))
+    prop = prop_result.scalar_one_or_none()
 
-        nego_table = NegoTable(
-            property_id=property_id,
-            status=NegoTableStatus.ACTIVE,
-            created_by_id=current_user.id,
-            referred_date=datetime.utcnow(),
-            source_origin="Upload",
-            original_property_name=prop_name,
-            current_property_name=prop_name,
-            original_location=prop_address,
-            current_location=prop_address,
-            original_property_type=prop_type,
-            current_property_type=prop_type,
-            original_lot_area=prop_lot_area,
-            current_lot_area=prop_lot_area,
-        )
-        db.add(nego_table)
-        await db.commit()
-        await db.refresh(nego_table)
-        print(f"✅ Auto-created NegoTable {nego_table.id} for property {property_id}")
+    nego_table = await _get_or_create_nego_table(property_id, db, current_user, prop)
 
-    # Replace existing attachments — keep only the latest per NegoTable
+    # Replace existing attachments — keep only the latest per NegoTable (current product behavior)
     old_attachments_result = await db.execute(
         select(NegotiationChronicleAttachment).where(
             NegotiationChronicleAttachment.nego_table_id == nego_table.id
@@ -1628,16 +1619,17 @@ async def upload_for_property(
     await db.commit()
     print(f"🗑️  Cleared old attachments for nego table {nego_table.id}")
 
-    # Upload file to OSS storage
+    # Upload file to OSS — must succeed; without a stored file we cannot analyze later
     await file.seek(0)
     try:
         upload_result = await file_storage_service.save_file(file, subfolder="negotiation_chronicles")
         file_url = upload_result["secure_url"]
     except Exception as exc:
-        print(f"⚠️  OSS upload failed, storing without file URL: {exc}")
-        file_url = ""
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to upload file to storage: {exc}",
+        )
 
-    # Persist attachment with ai_result
     attachment = NegotiationChronicleAttachment(
         nego_table_id=nego_table.id,
         filename=filename,
@@ -1645,19 +1637,189 @@ async def upload_for_property(
         file_type=lower.rsplit(".", 1)[-1],
         file_size=len(content),
         parsed_data=[],
-        ai_result=ai_result.model_dump(),
+        ai_result=None,
+        analysis_status="PENDING",
+        file_sha256=file_sha256,
         uploaded_by=current_user.id,
     )
     db.add(attachment)
     await db.commit()
     await db.refresh(attachment)
+    print(f"✅ Saved PENDING attachment {attachment.id} for property {property_id} (nego table {nego_table.id})")
 
-    print(f"✅ Saved AI comparison attachment {attachment.id} for property {property_id} (nego table {nego_table.id})")
+    if not analyze:
+        return UploadForPropertyResponse(
+            attachment_id=attachment.id,
+            nego_table_id=nego_table.id,
+            analysis_status="PENDING",
+            ai_result=None,
+        )
+
+    # Legacy inline-analyze path
+    api_key = settings.GOOGLE_GEMINI_API_KEY
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI analysis is not configured on this server (missing GOOGLE_GEMINI_API_KEY).",
+        )
+
+    try:
+        ai_result = await _run_gemini_on_bytes(content, filename, prop.name if prop else "", api_key)
+    except HTTPException:
+        attachment.analysis_status = "FAILED"
+        attachment.analysis_error = "Gemini call failed"
+        await db.commit()
+        raise
+    except Exception as exc:
+        attachment.analysis_status = "FAILED"
+        attachment.analysis_error = f"{type(exc).__name__}: {exc}"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"AI analysis failed: {type(exc).__name__}: {exc}",
+        )
+
+    attachment.ai_result = ai_result.model_dump()
+    attachment.analysis_status = "COMPLETED"
+    attachment.analyzed_at = datetime.utcnow()
+    attachment.analysis_error = None
+    await db.commit()
+    await db.refresh(attachment)
 
     return UploadForPropertyResponse(
         attachment_id=attachment.id,
-        ai_result=ai_result,
         nego_table_id=nego_table.id,
+        analysis_status="COMPLETED",
+        ai_result=ai_result,
+    )
+
+
+@router.post("/analyze/{attachment_id}", response_model=AnalyzeAttachmentResponse)
+async def analyze_attachment(
+    attachment_id: int,
+    force: bool = Query(False, description="Re-run Gemini even if attachment already has a COMPLETED analysis."),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Run Gemini analysis on a previously-uploaded attachment.
+    Idempotent: returns the existing result if already COMPLETED unless ?force=true.
+    """
+    api_key = settings.GOOGLE_GEMINI_API_KEY
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI analysis is not configured on this server (missing GOOGLE_GEMINI_API_KEY).",
+        )
+
+    attachment = (
+        await db.execute(
+            select(NegotiationChronicleAttachment).where(
+                NegotiationChronicleAttachment.id == attachment_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not attachment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+
+    if (
+        not force
+        and attachment.analysis_status == "COMPLETED"
+        and attachment.ai_result is not None
+    ):
+        return AnalyzeAttachmentResponse(
+            attachment_id=attachment.id,
+            nego_table_id=attachment.nego_table_id,
+            analysis_status=attachment.analysis_status,
+            ai_result=AIComparisonResult(**attachment.ai_result),
+            analyzed_at=attachment.analyzed_at,
+        )
+
+    if not attachment.file_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Attachment has no stored file URL — cannot analyze.",
+        )
+
+    # Mark as analyzing
+    attachment.analysis_status = "ANALYZING"
+    attachment.analysis_error = None
+    await db.commit()
+
+    # Fetch property name for sheet-targeting
+    nego_table = (
+        await db.execute(select(NegoTable).where(NegoTable.id == attachment.nego_table_id))
+    ).scalar_one_or_none()
+    prop_name = ""
+    if nego_table:
+        prop_result = await db.execute(
+            select(Property).where(Property.id == nego_table.property_id)
+        )
+        prop = prop_result.scalar_one_or_none()
+        if prop:
+            prop_name = prop.name or ""
+
+    # Download the file from OSS via the authenticated SDK (the bucket is private,
+    # so the stored public URL would 403 over plain HTTP).
+    from app.services.oss_service import get_oss_service
+    try:
+        oss = get_oss_service()
+        object_key = oss.object_key_from_url(attachment.file_url)
+        if not object_key:
+            raise ValueError(f"Could not derive object_key from file_url: {attachment.file_url}")
+        content = oss.download_file_content(object_key)
+    except HTTPException:
+        attachment.analysis_status = "FAILED"
+        attachment.analysis_error = "Failed to download file from storage"
+        await db.commit()
+        raise
+    except Exception as exc:
+        attachment.analysis_status = "FAILED"
+        attachment.analysis_error = f"Failed to download file from storage: {type(exc).__name__}: {exc}"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=attachment.analysis_error,
+        )
+
+    try:
+        ai_result = await _run_gemini_on_bytes(content, attachment.filename, prop_name, api_key)
+    except HTTPException as exc:
+        attachment.analysis_status = "FAILED"
+        attachment.analysis_error = str(exc.detail)
+        await db.commit()
+        raise
+    except json.JSONDecodeError as exc:
+        attachment.analysis_status = "FAILED"
+        attachment.analysis_error = f"Failed to parse AI response: {exc}"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=attachment.analysis_error,
+        )
+    except Exception as exc:
+        attachment.analysis_status = "FAILED"
+        attachment.analysis_error = f"{type(exc).__name__}: {exc}"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=attachment.analysis_error,
+        )
+
+    attachment.ai_result = ai_result.model_dump()
+    attachment.analysis_status = "COMPLETED"
+    attachment.analyzed_at = datetime.utcnow()
+    attachment.analysis_error = None
+    await db.commit()
+    await db.refresh(attachment)
+    print(f"✅ Analyzed attachment {attachment.id} for nego table {attachment.nego_table_id}")
+
+    return AnalyzeAttachmentResponse(
+        attachment_id=attachment.id,
+        nego_table_id=attachment.nego_table_id,
+        analysis_status="COMPLETED",
+        ai_result=ai_result,
+        analyzed_at=attachment.analyzed_at,
     )
 
 

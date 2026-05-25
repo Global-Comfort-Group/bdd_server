@@ -197,6 +197,35 @@ class OSSService:
         except OssError:
             return False
 
+    def download_file_content(self, object_key: str) -> bytes:
+        """Download file bytes from OSS using authenticated SDK (works on private buckets)."""
+        try:
+            obj = self.bucket.get_object(object_key)
+            return obj.read()
+        except OssError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"OSS download failed for {object_key}: {str(e)}"
+            )
+
+    def object_key_from_url(self, file_url: str) -> Optional[str]:
+        """Extract the OSS object_key from a stored file URL.
+        Supports both bucket-subdomain URLs (https://{bucket}.{endpoint}/{key})
+        and path-style URLs (https://{endpoint}/{bucket}/{key}).
+        Returns None if the URL does not match either pattern."""
+        if not file_url:
+            return None
+        prefix_subdomain = f"https://{settings.OSS_BUCKET_NAME}.{self.public_endpoint}/"
+        if file_url.startswith(prefix_subdomain):
+            return file_url[len(prefix_subdomain):]
+        prefix_internal = f"https://{settings.OSS_BUCKET_NAME}.{settings.OSS_ENDPOINT}/"
+        if file_url.startswith(prefix_internal):
+            return file_url[len(prefix_internal):]
+        prefix_path = f"https://{self.public_endpoint}/{settings.OSS_BUCKET_NAME}/"
+        if file_url.startswith(prefix_path):
+            return file_url[len(prefix_path):]
+        return None
+
     def generate_signed_url(
         self,
         object_key: str,

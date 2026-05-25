@@ -175,6 +175,8 @@ async def list_properties(
             "zip_code": prop.zip_code,
             "country": prop.country,
             "lot_area": float(prop.lot_area) if prop.lot_area else 0,
+            "building_area": float(prop.building_area) if prop.building_area else None,
+            "buildingArea": float(prop.building_area) if prop.building_area else None,
             "property_type": prop.property_type.value if prop.property_type else "RESIDENTIAL",
             "price": float(prop.price) if prop.price else 0,
             "currency": prop.currency or "PHP",
@@ -742,7 +744,39 @@ async def get_user_dashboard_statistics(
     # Duplicate alerts (only for admin/BDD users)
     # TODO: Implement actual duplicate detection logic with proper DuplicateGroup table
     duplicate_alerts = 0
-    
+
+    # Nego AI analysis alerts — count attachments by analysis_status (filtered by user scope)
+    from app.models.negotiation_chronicle import NegotiationChronicleAttachment
+    failed_analyses_query = select(func.count(NegotiationChronicleAttachment.id)).where(
+        NegotiationChronicleAttachment.analysis_status == "FAILED"
+    )
+    pending_analyses_query = select(func.count(NegotiationChronicleAttachment.id)).where(
+        NegotiationChronicleAttachment.analysis_status == "PENDING"
+    )
+    if not is_admin_or_bdd:
+        # Scope to attachments uploaded by this user
+        failed_analyses_query = failed_analyses_query.where(
+            NegotiationChronicleAttachment.uploaded_by == current_user.id
+        )
+        pending_analyses_query = pending_analyses_query.where(
+            NegotiationChronicleAttachment.uploaded_by == current_user.id
+        )
+    failed_analyses_result = await db.execute(failed_analyses_query)
+    failed_analyses = failed_analyses_result.scalar() or 0
+    pending_analyses_result = await db.execute(pending_analyses_query)
+    pending_analyses = pending_analyses_result.scalar() or 0
+
+    # Unassigned submissions in the last 7 days (admin/BDD only — surfaces routing gap)
+    if is_admin_or_bdd:
+        unassigned_this_week_query = select(func.count(Property.id)).where(
+            Property.reviewer_id.is_(None),
+            Property.created_at >= week_ago,
+        )
+        unassigned_this_week_result = await db.execute(unassigned_this_week_query)
+        unassigned_this_week = unassigned_this_week_result.scalar() or 0
+    else:
+        unassigned_this_week = 0
+
     # Get unread notifications count
     unread_notifications_query = select(func.count(Notification.id)).where(
         Notification.user_id == current_user.id,
@@ -769,6 +803,9 @@ async def get_user_dashboard_statistics(
         "underNegotiation": under_negotiation,
         "thisWeekSubmissions": this_week_submissions,
         "duplicateAlerts": duplicate_alerts,
+        "failedAnalyses": failed_analyses,
+        "pendingAnalyses": pending_analyses,
+        "unassignedThisWeek": unassigned_this_week,
         "unreadNotifications": unread_notifications,
         "statusBreakdown": status_breakdown,
         "userRole": current_user.role.value,

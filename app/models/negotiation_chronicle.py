@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -21,7 +21,13 @@ class NegotiationChronicleAttachment(Base):
 
     # Full Gemini AI analysis result (timeline mode)
     ai_result = Column(JSON, nullable=True)
-    
+
+    # Analysis lifecycle: PENDING (uploaded, not analyzed), ANALYZING, COMPLETED, FAILED
+    analysis_status = Column(String(20), nullable=False, server_default="PENDING", index=True)
+    analyzed_at = Column(DateTime(timezone=True), nullable=True)
+    analysis_error = Column(Text, nullable=True)
+    file_sha256 = Column(String(64), nullable=True, index=True)
+
     # Metadata
     uploaded_by = Column(Integer, ForeignKey("user.id"), nullable=True)  # Optional - supports anonymous uploads
     upload_date = Column(DateTime(timezone=True), server_default=func.now())
