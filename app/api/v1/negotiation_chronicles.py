@@ -244,8 +244,8 @@ async def delete_negotiation_chronicle_attachment(
             detail="Attachment not found"
         )
     
-    # Check if user has permission (BDD_USER or uploader)
-    if current_user.role != "BDD_USER" and attachment.uploaded_by != current_user.id:
+    # Check if user has permission (BDD_USER, ADMIN, or original uploader)
+    if current_user.role.value not in ["BDD_USER", "ADMIN"] and attachment.uploaded_by != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this attachment"
