@@ -102,7 +102,12 @@ class Property(Base):
         cascade="all, delete-orphan"
     )
     nego_tables: Mapped[List["NegoTable"]] = relationship(
-        "NegoTable", 
+        "NegoTable",
+        back_populates="property",
+        cascade="all, delete-orphan"
+    )
+    kmz_files: Mapped[List["PropertyKMZ"]] = relationship(
+        "PropertyKMZ",
         back_populates="property",
         cascade="all, delete-orphan"
     )
