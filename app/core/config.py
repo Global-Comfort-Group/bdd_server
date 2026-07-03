@@ -69,6 +69,11 @@ class Settings(BaseSettings):
             and self.S3_SECRET_ACCESS_KEY
         )
 
+    # Storage backend override. "local" serves uploads from this server's own
+    # filesystem via /api/v1/files, which is what the on-premise deployment
+    # runs. Anything else falls through to the S3/OSS selection above.
+    STORAGE_BACKEND: str = "oss"
+
     # Google Services (optional)
     GOOGLE_MAPS_API_KEY: Optional[str] = None
     GOOGLE_GEMINI_API_KEY: Optional[str] = None

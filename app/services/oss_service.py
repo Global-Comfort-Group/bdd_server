@@ -259,10 +259,23 @@ _oss_service = None
 def get_oss_service():
     """Get or create the storage service instance.
 
-    Returns an S3Service when an S3-compatible backend is configured, otherwise
-    the Alibaba OSS service. Both expose the same interface, so callers do not
-    care which one they get — the name is kept for the existing call sites.
+    Three backends, in priority order:
+
+      STORAGE_BACKEND="local"   this server's own filesystem, served through
+                                /api/v1/files — what the on-premise VM runs
+      S3 fully configured       an S3-compatible bucket
+      otherwise                 Alibaba Cloud OSS
+
+    STORAGE_BACKEND is checked first because it is an explicit choice, where
+    the S3 branch merely infers one from whether credentials happen to be set.
+    All three expose the same interface, so call sites do not care which they
+    get — hence the name, which predates there being more than one.
     """
+    if str(getattr(settings, "STORAGE_BACKEND", "oss")).lower() == "local":
+        from app.services.local_storage_service import get_local_storage_service
+        return get_local_storage_service()
+
+
     global _oss_service
     if _oss_service is None:
         if settings.use_s3_storage():
