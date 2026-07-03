@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     OSS_ENDPOINT: str = "oss-ap-southeast-6.aliyuncs.com"
     OSS_REGION: str = "ap-southeast-6"
 
+    # Storage backend: "oss" (Alibaba Cloud OSS) or "local" (this infra server's
+    # filesystem, served via /api/v1/files). Default preserves OSS behaviour.
+    STORAGE_BACKEND: str = "oss"
+
     # Google Services (optional)
     GOOGLE_MAPS_API_KEY: Optional[str] = None
     GOOGLE_GEMINI_API_KEY: Optional[str] = None

@@ -171,3 +171,7 @@ docs/
 
 .env.staging
 .env.*
+backups/
+*.dump
+app/api/v1/bdd_client.code-workspace
+.claude/
