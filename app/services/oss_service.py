@@ -256,8 +256,17 @@ class OSSService:
 _oss_service: Optional[OSSService] = None
 
 
-def get_oss_service() -> OSSService:
-    """Get or create OSS service instance"""
+def get_oss_service():
+    """Return the active storage backend.
+
+    Selected by ``settings.STORAGE_BACKEND``: "local" uses the on-server
+    filesystem (LocalStorageService); anything else uses Alibaba Cloud OSS.
+    Both expose the same interface, so all call sites work unchanged.
+    """
+    if str(getattr(settings, "STORAGE_BACKEND", "oss")).lower() == "local":
+        from app.services.local_storage_service import get_local_storage_service
+        return get_local_storage_service()
+
     global _oss_service
     if _oss_service is None:
         _oss_service = OSSService()

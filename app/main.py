@@ -21,6 +21,7 @@ from app.api.v1.nego_ai_analysis import router as nego_ai_analysis_router
 from app.api.admin import admin_router
 from app.api.v1.uploads import router as uploads_router
 from app.api.v1.address import router as address_router
+from app.api.v1.files import router as files_router
 
 
 @asynccontextmanager
@@ -154,6 +155,12 @@ app.include_router(
     address_router,
     prefix=f"{settings.API_V1_PREFIX}/address",
     tags=["address"]
+)
+
+app.include_router(
+    files_router,
+    prefix=settings.API_V1_PREFIX,
+    tags=["files"]
 )
 
 # Add exception handlers
