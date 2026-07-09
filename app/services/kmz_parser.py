@@ -112,7 +112,115 @@ def _extract_geometry(placemark: ET.Element) -> dict[str, Any] | None:
     return None
 
 
-def _placemark_to_feature(placemark: ET.Element, folder: str | None) -> dict[str, Any] | None:
+# --- Icon / style resolution -------------------------------------------------
+#
+# Google Earth placemarks reference an icon indirectly:
+#   <Placemark><styleUrl>#msn_dining</styleUrl> ...
+#   <StyleMap id="msn_dining"><Pair><key>normal</key><styleUrl>#sn_dining</styleUrl></Pair>...
+#   <Style id="sn_dining"><IconStyle><scale>1.1</scale>
+#       <Icon><href>http://maps.google.com/mapfiles/kml/shapes/dining.png</href></Icon>
+#       <hotSpot x="0.5" y="0" xunits="fraction" yunits="fraction"/></IconStyle></Style>
+#
+# We resolve each placemark to its icon URL (+ scale + anchor) so the map can
+# render the same icon the KMZ author picked in Google Earth, instead of a
+# generic dot. Icons are Google-hosted URLs; we never store binary assets.
+
+_ICON_MAX_STYLE_DEPTH = 5
+
+
+def _icon_from_iconstyle(iconstyle: ET.Element) -> dict[str, Any] | None:
+    """Extract ``{icon, scale, anchor}`` from an ``<IconStyle>``, or None.
+
+    Only absolute http(s) hrefs are usable directly; ``http://`` is upgraded to
+    ``https://`` to avoid mixed-content blocking on the HTTPS app. Relative
+    (embedded-asset) hrefs are not served, so they yield None and the caller
+    falls back to the default pin.
+    """
+    icon_el = _find_child(iconstyle, "Icon")
+    href = _text(_find_child(icon_el, "href")) if icon_el is not None else None
+    if not href:
+        return None
+    if href.startswith("http://"):
+        href = "https://" + href[len("http://"):]
+    elif not href.startswith("https://"):
+        return None
+
+    scale_text = _text(_find_child(iconstyle, "scale"))
+    try:
+        scale = float(scale_text) if scale_text else None
+    except ValueError:
+        scale = None
+
+    anchor: dict[str, Any] | None = None
+    hotspot = _find_child(iconstyle, "hotSpot")
+    if hotspot is not None:
+        try:
+            anchor = {
+                "x": float(hotspot.get("x", "0.5")),
+                "y": float(hotspot.get("y", "0.5")),
+                "xunits": hotspot.get("xunits", "fraction"),
+                "yunits": hotspot.get("yunits", "fraction"),
+            }
+        except (ValueError, TypeError):
+            anchor = None
+
+    return {"icon": href, "scale": scale, "anchor": anchor}
+
+
+def _icon_from_style_element(style: ET.Element) -> dict[str, Any] | None:
+    iconstyle = _find_child(style, "IconStyle")
+    return _icon_from_iconstyle(iconstyle) if iconstyle is not None else None
+
+
+def _collect_style_index(root: ET.Element) -> tuple[dict[str, dict], dict[str, str]]:
+    """Build ``{style_id -> icon info}`` and ``{stylemap_id -> normal style url}``
+    from every ``<Style id>`` / ``<StyleMap id>`` anywhere in the document."""
+    icon_styles: dict[str, dict] = {}
+    style_maps: dict[str, str] = {}
+    for el in root.iter():
+        name = _localname(el.tag)
+        el_id = el.get("id")
+        if not el_id:
+            continue
+        if name == "Style":
+            info = _icon_from_style_element(el)
+            if info is not None:
+                icon_styles[el_id] = info
+        elif name == "StyleMap":
+            for pair in el:
+                if _localname(pair.tag) != "Pair":
+                    continue
+                if _text(_find_child(pair, "key")) == "normal":
+                    normal_url = _text(_find_child(pair, "styleUrl"))
+                    if normal_url:
+                        style_maps[el_id] = normal_url.lstrip("#")
+                    break
+    return icon_styles, style_maps
+
+
+def _resolve_icon(
+    style_url: str | None,
+    icon_styles: dict[str, dict],
+    style_maps: dict[str, str],
+    _depth: int = 0,
+) -> dict[str, Any] | None:
+    """Follow a ``styleUrl`` through StyleMaps to the icon it ultimately names."""
+    if not style_url or _depth > _ICON_MAX_STYLE_DEPTH:
+        return None
+    key = style_url.lstrip("#")
+    if key in icon_styles:
+        return icon_styles[key]
+    if key in style_maps:
+        return _resolve_icon(style_maps[key], icon_styles, style_maps, _depth + 1)
+    return None
+
+
+def _placemark_to_feature(
+    placemark: ET.Element,
+    folder: str | None,
+    icon_styles: dict[str, dict],
+    style_maps: dict[str, str],
+) -> dict[str, Any] | None:
     try:
         geometry = _extract_geometry(placemark)
     except (ValueError, IndexError) as exc:
@@ -120,6 +228,14 @@ def _placemark_to_feature(placemark: ET.Element, folder: str | None) -> dict[str
         raise KMZParseError(f"Invalid coordinates in placemark '{name}': {exc}") from exc
     if geometry is None:
         return None
+
+    # Inline <Style> on the placemark wins; otherwise resolve its <styleUrl>.
+    inline_style = _find_child(placemark, "Style")
+    icon_info = _icon_from_style_element(inline_style) if inline_style is not None else None
+    if icon_info is None:
+        icon_info = _resolve_icon(
+            _text(_find_child(placemark, "styleUrl")), icon_styles, style_maps
+        )
 
     return {
         "type": "Feature",
@@ -129,24 +245,34 @@ def _placemark_to_feature(placemark: ET.Element, folder: str | None) -> dict[str
             "description": _text(_find_child(placemark, "description")),
             "geometry_type": geometry["type"],
             "folder": folder,
+            # Icon the KMZ author assigned in Google Earth (None -> default pin).
+            "icon": icon_info["icon"] if icon_info else None,
+            "icon_scale": icon_info["scale"] if icon_info else None,
+            "icon_anchor": icon_info["anchor"] if icon_info else None,
         },
     }
 
 
-def _collect_features(element: ET.Element, folder: str | None, out: list[dict[str, Any]]) -> None:
+def _collect_features(
+    element: ET.Element,
+    folder: str | None,
+    out: list[dict[str, Any]],
+    icon_styles: dict[str, dict],
+    style_maps: dict[str, str],
+) -> None:
     """Recursively walk Document/Folder containers, collecting placemark
     features and tracking the name of the nearest enclosing <Folder>."""
     for child in element:
         tag = _localname(child.tag)
         if tag == "Placemark":
-            feature = _placemark_to_feature(child, folder)
+            feature = _placemark_to_feature(child, folder, icon_styles, style_maps)
             if feature is not None:
                 out.append(feature)
         elif tag == "Folder":
             child_folder = _text(_find_child(child, "name")) or folder
-            _collect_features(child, child_folder, out)
+            _collect_features(child, child_folder, out, icon_styles, style_maps)
         elif tag == "Document":
-            _collect_features(child, folder, out)
+            _collect_features(child, folder, out, icon_styles, style_maps)
 
 
 def _extract_kml(data: bytes) -> str:
@@ -176,7 +302,9 @@ def parse_kmz(data: bytes) -> dict[str, Any]:
     except ET.ParseError as exc:
         raise KMZParseError(f"KML document is not well-formed XML: {exc}") from exc
 
+    icon_styles, style_maps = _collect_style_index(root)
+
     features: list[dict[str, Any]] = []
-    _collect_features(root, None, features)
+    _collect_features(root, None, features, icon_styles, style_maps)
 
     return {"type": "FeatureCollection", "features": features}

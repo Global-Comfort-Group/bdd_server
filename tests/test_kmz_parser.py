@@ -297,3 +297,99 @@ def test_empty_kml_returns_empty_collection():
     FeatureCollection."""
     result = parse_kmz(make_kmz(KML_DOC.format(body="")))
     assert result == {"type": "FeatureCollection", "features": []}
+
+
+# --- Icon / style resolution -------------------------------------------------
+
+def test_icon_resolved_via_stylemap():
+    """A placemark -> StyleMap(normal) -> Style -> IconStyle chain resolves to
+    the icon URL, with http upgraded to https, plus scale and hotSpot anchor.
+    This is the exact shape Google Earth exports (see Bacolod.kmz)."""
+    kml = KML_DOC.format(body="""
+      <Style id="sn_dining">
+        <IconStyle>
+          <scale>1.1</scale>
+          <Icon><href>http://maps.google.com/mapfiles/kml/shapes/dining.png</href></Icon>
+          <hotSpot x="0.5" y="0" xunits="fraction" yunits="fraction"/>
+        </IconStyle>
+      </Style>
+      <StyleMap id="msn_dining">
+        <Pair><key>normal</key><styleUrl>#sn_dining</styleUrl></Pair>
+        <Pair><key>highlight</key><styleUrl>#sh_dining</styleUrl></Pair>
+      </StyleMap>
+      <Placemark>
+        <name>Some Restaurant</name>
+        <styleUrl>#msn_dining</styleUrl>
+        <Point><coordinates>120.9842,14.5995,0</coordinates></Point>
+      </Placemark>
+    """)
+    props = parse_kmz(make_kmz(kml))["features"][0]["properties"]
+    assert props["icon"] == "https://maps.google.com/mapfiles/kml/shapes/dining.png"
+    assert props["icon_scale"] == 1.1
+    assert props["icon_anchor"] == {"x": 0.5, "y": 0.0, "xunits": "fraction", "yunits": "fraction"}
+
+
+def test_icon_resolved_via_direct_style_ref():
+    """A styleUrl pointing straight at a <Style> (no StyleMap) also resolves."""
+    kml = KML_DOC.format(body="""
+      <Style id="sn_grocery">
+        <IconStyle>
+          <Icon><href>https://maps.google.com/mapfiles/kml/shapes/grocery.png</href></Icon>
+        </IconStyle>
+      </Style>
+      <Placemark>
+        <styleUrl>#sn_grocery</styleUrl>
+        <Point><coordinates>120.9842,14.5995,0</coordinates></Point>
+      </Placemark>
+    """)
+    props = parse_kmz(make_kmz(kml))["features"][0]["properties"]
+    assert props["icon"] == "https://maps.google.com/mapfiles/kml/shapes/grocery.png"
+    # No <scale>/<hotSpot> -> those stay None.
+    assert props["icon_scale"] is None
+    assert props["icon_anchor"] is None
+
+
+def test_inline_style_icon_wins():
+    """An inline <Style> directly on the placemark is used for the icon."""
+    kml = KML_DOC.format(body="""
+      <Placemark>
+        <Style>
+          <IconStyle><Icon><href>https://example.com/pin.png</href></Icon></IconStyle>
+        </Style>
+        <Point><coordinates>120.9842,14.5995,0</coordinates></Point>
+      </Placemark>
+    """)
+    props = parse_kmz(make_kmz(kml))["features"][0]["properties"]
+    assert props["icon"] == "https://example.com/pin.png"
+
+
+def test_missing_style_yields_no_icon():
+    """A placemark with no style (or an unresolvable styleUrl) has icon=None so
+    the map falls back to the default pin."""
+    kml = KML_DOC.format(body="""
+      <Placemark>
+        <name>Plain</name>
+        <styleUrl>#does_not_exist</styleUrl>
+        <Point><coordinates>120.9842,14.5995,0</coordinates></Point>
+      </Placemark>
+    """)
+    props = parse_kmz(make_kmz(kml))["features"][0]["properties"]
+    assert props["icon"] is None
+    assert props["icon_scale"] is None
+    assert props["icon_anchor"] is None
+
+
+def test_relative_icon_href_ignored():
+    """A relative (embedded-asset) href can't be served, so it is treated as no
+    icon rather than emitting a broken URL."""
+    kml = KML_DOC.format(body="""
+      <Style id="s1">
+        <IconStyle><Icon><href>files/custom.png</href></Icon></IconStyle>
+      </Style>
+      <Placemark>
+        <styleUrl>#s1</styleUrl>
+        <Point><coordinates>120.9842,14.5995,0</coordinates></Point>
+      </Placemark>
+    """)
+    props = parse_kmz(make_kmz(kml))["features"][0]["properties"]
+    assert props["icon"] is None
