@@ -15,15 +15,16 @@ Nothing between steps 2 and 4 invents a value: a field the sheet lacks stays
 NULL until a human supplies it at promotion.
 """
 import uuid
-import time
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
 from app.models.enums import TransactionStatus
+from app.models.property_import_token import PropertyImportToken
 from app.models.property_import import (
     IMPORT_DISCARDED,
     IMPORT_PENDING,
@@ -48,20 +49,20 @@ from app.schemas.property import (
 
 router = APIRouter(prefix="/properties/import", tags=["admin-excel-import"])
 
-# ── In-memory cache ──────────────────────────────────────────────────────────
-# Stores parsed rows keyed by import_token.
-# Each entry: {"rows": list[dict], "expires_at": float (unix timestamp)}
-_import_cache: Dict[str, Any] = {}
-
+# ── Preview token store ──────────────────────────────────────────────────────
+# Parsed rows are persisted in `property_import_tokens` rather than a process
+# dict: the app runs `uvicorn --workers 2`, so preview and confirm are often
+# served by different workers, and a redeploy between the two would lose an
+# in-memory entry. Either case surfaced as "Import token not found or expired".
 _TOKEN_TTL_SECONDS = 600  # 10 minutes
 
 
-def _evict_expired() -> None:
-    """Remove expired tokens from the cache."""
-    now = time.time()
-    expired = [k for k, v in _import_cache.items() if v["expires_at"] < now]
-    for k in expired:
-        del _import_cache[k]
+async def _evict_expired(db: AsyncSession) -> None:
+    """Drop tokens past their TTL. Cheap, and keeps the table from growing."""
+    await db.execute(
+        delete(PropertyImportToken).where(PropertyImportToken.expires_at < datetime.utcnow())
+    )
+    await db.commit()
 
 
 def _missing_required(record: PropertyImport) -> List[str]:
@@ -150,13 +151,18 @@ async def preview_excel_import(
     raw_rows = flag_duplicates(raw_rows, existing)
     duplicate_count = sum(1 for r in raw_rows if r.get("duplicate_kind"))
 
-    _evict_expired()
+    await _evict_expired(db)
     import_token = str(uuid.uuid4())
-    _import_cache[import_token] = {
-        "rows": raw_rows,
-        "source_file": file.filename,
-        "expires_at": time.time() + _TOKEN_TTL_SECONDS,
-    }
+    db.add(
+        PropertyImportToken(
+            token=import_token,
+            rows=raw_rows,
+            source_file=file.filename,
+            created_by_id=current_user.id,
+            expires_at=datetime.utcnow() + timedelta(seconds=_TOKEN_TTL_SECONDS),
+        )
+    )
+    await db.commit()
 
     preview_rows = [ExcelPropertyPreviewRow(**row) for row in raw_rows]
 
@@ -180,17 +186,16 @@ async def confirm_excel_import(
     This does NOT create properties. Rows land in `property_imports` with every
     sheet-absent value left NULL; they become properties only via /promote.
     """
-    _evict_expired()
-
-    cached = _import_cache.get(body.import_token)
+    cached = await db.get(PropertyImportToken, body.import_token)
     if not cached:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Import token not found or expired. Please re-upload the file.",
         )
 
-    if time.time() > cached["expires_at"]:
-        del _import_cache[body.import_token]
+    if cached.expires_at < datetime.utcnow():
+        await db.delete(cached)
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Import token has expired. Please re-upload the file.",
@@ -203,7 +208,7 @@ async def confirm_excel_import(
         )
 
     selected_ids = set(body.row_ids)
-    all_rows = cached["rows"]
+    all_rows = cached.rows
     selected_rows = [r for r in all_rows if r["row_id"] in selected_ids]
     not_found = len(body.row_ids) - len(selected_rows)
 
@@ -211,10 +216,11 @@ async def confirm_excel_import(
         db,
         rows=selected_rows,
         user_id=current_user.id,
-        source_file=cached.get("source_file"),
+        source_file=cached.source_file,
     )
 
-    del _import_cache[body.import_token]
+    await db.delete(cached)
+    await db.commit()
 
     return ExcelImportResult(
         staged_count=staged_count,
