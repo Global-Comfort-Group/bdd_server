@@ -1,6 +1,7 @@
 from app.models.user import User
 from app.models.property import Property, PropertyAttachment
 from app.models.property_import import PropertyImport
+from app.models.property_import_token import PropertyImportToken
 from app.models.address import Address
 from app.models.workflow import WorkflowHistory
 from app.models.nego_table import NegoTable, NegotiationEntry, NegoTableStatus
