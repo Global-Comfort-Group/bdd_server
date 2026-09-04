@@ -73,16 +73,26 @@ def _missing_required(record: PropertyImport) -> List[str]:
     """
     if record.review_status != IMPORT_PENDING:
         return []
-    missing = ["price", "property_type", "zoning_classification"]
+
+    missing = []
+    # The complete-format template sheet supplies these; the monthly sheets
+    # leave them NULL, so a template row can come back with nothing missing.
+    if record.price is None:
+        missing.append("price")
+    if not record.property_type:
+        missing.append("property_type")
+    if not record.zoning_classification:
+        missing.append("zoning_classification")
     if record.lot_area is None:
         missing.append("lot_area")
-    derived = staging.derived_transaction_status(record)
-    if derived is None:
+
+    transaction = record.transaction_status or staging.derived_transaction_status(record)
+    if not transaction:
         missing.append("transaction_status")
-    elif derived == TransactionStatus.SL:
-        # A sheet row carrying BOTH a lease and a sale figure derives Sale &
-        # Lease, and the property schema requires a lease price for that — so
-        # say so up front rather than failing at submit.
+    elif str(transaction) in (TransactionStatus.SL, TransactionStatus.SL.value) and record.lease_price is None:
+        # Sale & Lease requires a lease price, whether that came from the
+        # template's own column or was derived from lease+sale on a monthly
+        # sheet. Say so up front rather than failing at submit.
         missing.append("lease_price")
     return missing
 

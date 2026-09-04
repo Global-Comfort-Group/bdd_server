@@ -105,6 +105,17 @@ async def stage_rows(
                     lease_raw=row.get("lease_raw"),
                     sale_raw=row.get("sale_raw"),
                     status_hint=row.get("status_hint"),
+                    # Present only on the complete-format template sheet.
+                    price=row.get("price"),
+                    lease_price=row.get("lease_price"),
+                    property_type=row.get("property_type"),
+                    zoning_classification=row.get("zoning_classification"),
+                    transaction_status=row.get("transaction_status"),
+                    title_number=row.get("title_number"),
+                    floors=row.get("floors"),
+                    rooms=row.get("rooms"),
+                    parking_slots=row.get("parking_slots"),
+                    description=row.get("description"),
                     sheet_name=row.get("sheet_name"),
                     row_number=row.get("row_number"),
                     source_file=source_file,
@@ -190,11 +201,18 @@ async def promote(
                 f"A property named '{p.name}' already exists at this address (id {p.id})."
             )
 
+    # An admin's value always wins; otherwise fall back to whatever the sheet
+    # supplied. A row from the template sheet arrives complete, so promoting it
+    # needs no input at all.
     lot_area = overrides.get("lot_area", record.lot_area)
-    price = overrides.get("price")
-    property_type = overrides.get("property_type")
-    zoning = overrides.get("zoning_classification")
-    transaction_status = overrides.get("transaction_status") or derived_transaction_status(record)
+    price = overrides.get("price", record.price)
+    property_type = overrides.get("property_type") or record.property_type
+    zoning = overrides.get("zoning_classification") or record.zoning_classification
+    transaction_status = (
+        overrides.get("transaction_status")
+        or record.transaction_status
+        or derived_transaction_status(record)
+    )
 
     missing = [
         label
@@ -214,9 +232,11 @@ async def promote(
         )
 
     existing_note = provenance_note(record)
-    description = overrides.get("description") or existing_note or None
-    if overrides.get("description") and existing_note:
-        description = f"{overrides['description']}\n\n{existing_note}"
+    # The template sheet has its own description column; an admin's text wins.
+    admin_note = overrides.get("description") or record.description
+    description = admin_note or existing_note or None
+    if admin_note and existing_note:
+        description = f"{admin_note}\n\n{existing_note}"
 
     payload = {
         "name": overrides.get("name") or record.name,
@@ -226,17 +246,17 @@ async def promote(
         "property_type": property_type,
         "zoning_classification": zoning,
         "transaction_status": transaction_status,
-        "lease_price": overrides.get("lease_price"),
+        "lease_price": overrides.get("lease_price", record.lease_price),
         "building_area": overrides.get("building_area", record.building_area),
         "referred_by": overrides.get("referred_by", record.referred_by),
         "description": description,
         "currency": overrides.get("currency") or "PHP",
         "latitude": overrides.get("latitude"),
         "longitude": overrides.get("longitude"),
-        "title_number": overrides.get("title_number"),
-        "floors": overrides.get("floors"),
-        "parking_slots": overrides.get("parking_slots"),
-        "rooms": overrides.get("rooms"),
+        "title_number": overrides.get("title_number", record.title_number),
+        "floors": overrides.get("floors", record.floors),
+        "parking_slots": overrides.get("parking_slots", record.parking_slots),
+        "rooms": overrides.get("rooms", record.rooms),
     }
 
     # Validate through the SAME schema a manually submitted property uses, so a

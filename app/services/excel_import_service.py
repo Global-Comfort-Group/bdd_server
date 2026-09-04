@@ -36,17 +36,39 @@ _HEADER_MARKER = "PROPERTY NAME"
 #
 # Note "REFERREBY BY" — the header is misspelled in the source file, so it is
 # matched by a prefix short enough to survive the typo.
+# ORDER MATTERS — the first prefix that matches wins, so a longer, more
+# specific prefix must come before a shorter one it starts with
+# ("LEASE PRICE" before "Lease", or the template's price column would be read
+# as the monthly sheets' lease rate).
 _HEADER_FIELDS = [
     ("PROPERTYNAME", "name"),
     ("PROPERTYCODING", "address"),
     ("PROPERTYSOURCING", "sourced_by"),
+    ("PROPERTYTYPE", "property_type"),
     ("LOTAREA", "lot_area"),
     ("CFA", "building_area"),
-    ("LEASE", "lease_raw"),
+    ("LEASEPRICE", "lease_price"),  # template — a number
+    ("LEASE", "lease_raw"),         # monthly sheets — free text ("300/sqm.")
     ("SALE", "sale_raw"),
+    ("PRICE", "price"),
+    ("ZONING", "zoning_classification"),
+    ("TRANSACTION", "transaction_status"),
+    ("TITLENUMBER", "title_number"),
+    ("FLOORS", "floors"),
+    ("ROOMS", "rooms"),
+    ("PARKING", "parking_slots"),
+    ("DESCRIPTION", "description"),
     ("REFERRE", "referral_type"),   # "REFERRED BY" / "REFERREBY BY"
     ("STATUS", "status_hint"),
 ]
+
+# Fields the complete-format template supplies that the monthly sheets do not.
+# Absent on a monthly sheet, which simply leaves them None.
+_TEMPLATE_TEXT_FIELDS = (
+    "property_type", "zoning_classification", "transaction_status", "title_number",
+    "description",
+)
+_TEMPLATE_NUMBER_FIELDS = ("price", "lease_price", "floors", "rooms", "parking_slots")
 
 
 def _norm_header(value: Any) -> str:
@@ -199,7 +221,30 @@ def parse_excel_properties(file_bytes: bytes) -> List[Dict[str, Any]]:
             if name and name.isdigit():
                 continue
 
-            row_number = row[0].row if row else 0
+            # row[0] can be an EmptyCell in read_only mode, which has no .row —
+            # that happens whenever column A of the row is blank. Take the
+            # number from any real cell instead.
+            row_number = next(
+                (c.row for c in row if hasattr(c, "row") and c.row is not None), 0
+            )
+
+            # The template sheet carries the fields the monthly sheets lack. On
+            # a monthly sheet these columns simply do not exist, so every one
+            # resolves to None and the lead still needs a human at promotion.
+            extra: Dict[str, Any] = {
+                f: col(cells, f) for f in _TEMPLATE_TEXT_FIELDS
+            }
+            for f in _TEMPLATE_NUMBER_FIELDS:
+                extra[f] = _parse_number(col(cells, f))
+            # Enum-ish values are normalized here so "hotel" or "Land & Building"
+            # from a hand-typed cell still match; anything unrecognised is left
+            # as-is for the schema to reject rather than silently corrected.
+            if extra.get("property_type"):
+                extra["property_type"] = (
+                    extra["property_type"].strip().upper().replace(" & ", "_AND_").replace(" ", "_")
+                )
+            if extra.get("transaction_status"):
+                extra["transaction_status"] = extra["transaction_status"].strip().upper()
 
             results.append({
                 "row_id": f"{sheet_name}|{row_number}",
@@ -214,6 +259,7 @@ def parse_excel_properties(file_bytes: bytes) -> List[Dict[str, Any]]:
                 "lease_raw": col(cells, "lease_raw"),
                 "sale_raw": col(cells, "sale_raw"),
                 "status_hint": col(cells, "status_hint"),
+                **extra,
             })
 
     wb.close()

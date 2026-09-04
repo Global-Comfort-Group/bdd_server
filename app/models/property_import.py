@@ -17,6 +17,7 @@ schema has already migrated zoning_classification to an enum and back again
 repeating that.
 """
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import (
@@ -24,6 +25,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -57,6 +59,21 @@ class PropertyImport(Base):
     lease_raw: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     sale_raw: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     status_hint: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # --- Supplied only by the "TEMPLATE (Complete)" sheet ----------------
+    # The monthly sheets have no such columns, so these stay NULL there and the
+    # lead still needs a human at promotion. Filled in on the template sheet,
+    # a row can be promoted with nothing left to enter.
+    price: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2), nullable=True)
+    lease_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2), nullable=True)
+    property_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    zoning_classification: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    transaction_status: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    title_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    floors: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rooms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    parking_slots: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # --- Provenance ------------------------------------------------------
     sheet_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
