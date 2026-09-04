@@ -46,5 +46,5 @@ echo "🌐 Starting uvicorn server..."
 # it, the trailing-slash redirect returns an http:// Location behind a TLS-
 # terminating proxy, which browsers block as mixed content on an https page.
 exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info \
-    --proxy-headers --forwarded-allow-ips='*'
+    --workers ${WEB_CONCURRENCY:-2} --proxy-headers --forwarded-allow-ips='*'
 
