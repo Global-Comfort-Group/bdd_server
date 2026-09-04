@@ -215,6 +215,18 @@ class ExcelPropertyPreviewRow(BaseModel):
     lease_raw: Optional[str] = None        # raw text, e.g. "300/sqm."
     sale_raw: Optional[str] = None         # raw text, e.g. "94Million"
 
+    # Supplied only by the complete-format template sheet.
+    price: Optional[Decimal] = None
+    lease_price: Optional[Decimal] = None
+    property_type: Optional[str] = None
+    zoning_classification: Optional[str] = None
+    transaction_status: Optional[str] = None
+    title_number: Optional[str] = None
+    floors: Optional[int] = None
+    rooms: Optional[int] = None
+    parking_slots: Optional[int] = None
+    description: Optional[str] = None
+
     # Duplicate advice from the preview step. Advisory only — the admin can
     # still select a flagged row. Enforcement happens at confirm time.
     duplicate_kind: Optional[str] = None    # "existing" | "in_file" | None
@@ -262,6 +274,16 @@ class PropertyImportRead(BaseModel):
     lease_raw: Optional[str] = None
     sale_raw: Optional[str] = None
     status_hint: Optional[str] = None
+    price: Optional[Decimal] = None
+    lease_price: Optional[Decimal] = None
+    property_type: Optional[str] = None
+    zoning_classification: Optional[str] = None
+    transaction_status: Optional[str] = None
+    title_number: Optional[str] = None
+    floors: Optional[int] = None
+    rooms: Optional[int] = None
+    parking_slots: Optional[int] = None
+    description: Optional[str] = None
     sheet_name: Optional[str] = None
     row_number: Optional[int] = None
     source_file: Optional[str] = None
@@ -304,11 +326,15 @@ class PromoteImportRequest(BaseModel):
     lot_area and transaction_status may be omitted when the staged row already
     has them; the rest are always required because no sheet layout carries them.
     """
-    price: Decimal
-    property_type: PropertyType
+    # All optional: a row from the complete-format template sheet already
+    # carries these, so promoting it needs no input at all. `promote()`
+    # validates the MERGED result (admin value, else staged value) through
+    # PropertyCreate, so a genuinely missing field is still rejected there.
+    price: Optional[Decimal] = None
+    property_type: Optional[PropertyType] = None
     # Same Literal the manual submission path uses — a loose `str` here would
     # let promotion write zoning values the property form rejects.
-    zoning_classification: ZoningClassification
+    zoning_classification: Optional[ZoningClassification] = None
     lot_area: Optional[float] = None
     transaction_status: Optional[TransactionStatus] = None
     lease_price: Optional[Decimal] = None
