@@ -145,6 +145,24 @@ app.include_router(
     tags=["admin-portal"]
 )
 
+# Also expose the admin portal under the versioned prefix.
+#
+# The deployed topology proxies ONLY `/api/v1/*` to this service
+# (see `rewrites()` in the client's next.config.ts), and `/admin/*` on the
+# public host is served by Next.js as its own page routes. Mounted solely at
+# the root, every admin endpoint is therefore unreachable from a browser in
+# staging/production — `/api/v1/admin/users` 404s here while `/admin/users`
+# never leaves the frontend.
+#
+# The client already builds admin URLs as `${BASE_URL}/admin/...`, i.e.
+# `/api/v1/admin/...`, so this makes those resolve. The root mount is kept so
+# local setups that call the backend directly on :8000 keep working.
+app.include_router(
+    admin_router,
+    prefix=settings.API_V1_PREFIX,
+    tags=["admin-portal"]
+)
+
 app.include_router(
     uploads_router,
     prefix=settings.API_V1_PREFIX,
