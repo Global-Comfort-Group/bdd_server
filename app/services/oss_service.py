@@ -271,3 +271,24 @@ def get_oss_service():
         else:
             _oss_service = OSSService()
     return _oss_service
+
+
+def resign_stored_url(file_url: Optional[str], expires: int = 3600) -> Optional[str]:
+    """Turn a stored canonical object URL into a freshly signed, loadable one.
+
+    Buckets are private, so a stored URL is a durable reference rather than
+    something a browser can fetch. Anything that is not one of our object URLs
+    — an external link, or a signed URL minted by another backend — is returned
+    untouched, which keeps URLs written before this existed working.
+    """
+    if not file_url:
+        return file_url
+    try:
+        service = get_oss_service()
+        object_key = service.object_key_from_url(file_url)
+        if not object_key:
+            return file_url
+        return service.generate_signed_url(object_key, expires=expires)
+    except Exception:
+        # Never let a signing failure break a read path
+        return file_url

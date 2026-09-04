@@ -204,6 +204,10 @@ class S3Service:
             return file_url[len(prefix_path):]
         return None
 
+    # SigV4 presigned URLs are rejected beyond 7 days; OSS allows far longer, so
+    # callers written against OSS can ask for more than S3 will accept.
+    MAX_PRESIGN_SECONDS = 7 * 24 * 3600
+
     def generate_signed_url(
         self,
         object_key: str,
@@ -211,6 +215,7 @@ class S3Service:
         method: str = 'GET'
     ) -> str:
         """Generate a presigned URL for temporary access."""
+        expires = min(expires, self.MAX_PRESIGN_SECONDS)
         operation = {
             "GET": "get_object",
             "PUT": "put_object",
