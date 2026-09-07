@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr, field_serializer
+from pydantic import BaseModel, EmailStr
 
 from app.models.enums import UserRole, AccountStatus
 
@@ -22,12 +22,6 @@ class UserPublic(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    @field_serializer('avatar_url')
-    def _sign_avatar_url(self, value: Optional[str]) -> Optional[str]:
-        """Stored avatar URLs point at a private bucket; sign them on the way out."""
-        from app.services.oss_service import resign_stored_url
-        return resign_stored_url(value)
-
     @property
     def full_name(self) -> str:
         if self.middle_name:
@@ -55,12 +49,6 @@ class UserRead(BaseModel):
     account_status: AccountStatus
     created_at: datetime
     updated_at: datetime
-
-    @field_serializer('avatar_url')
-    def _sign_avatar_url(self, value: Optional[str]) -> Optional[str]:
-        """Stored avatar URLs point at a private bucket; sign them on the way out."""
-        from app.services.oss_service import resign_stored_url
-        return resign_stored_url(value)
 
     @property
     def full_name(self) -> str:

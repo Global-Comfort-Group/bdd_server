@@ -253,42 +253,12 @@ class OSSService:
 
 
 # Lazy initialization - only create instance when needed
-_oss_service = None
+_oss_service: Optional[OSSService] = None
 
 
-def get_oss_service():
-    """Get or create the storage service instance.
-
-    Returns an S3Service when an S3-compatible backend is configured, otherwise
-    the Alibaba OSS service. Both expose the same interface, so callers do not
-    care which one they get — the name is kept for the existing call sites.
-    """
+def get_oss_service() -> OSSService:
+    """Get or create OSS service instance"""
     global _oss_service
     if _oss_service is None:
-        if settings.use_s3_storage():
-            from app.services.s3_service import S3Service
-            _oss_service = S3Service()
-        else:
-            _oss_service = OSSService()
+        _oss_service = OSSService()
     return _oss_service
-
-
-def resign_stored_url(file_url: Optional[str], expires: int = 3600) -> Optional[str]:
-    """Turn a stored canonical object URL into a freshly signed, loadable one.
-
-    Buckets are private, so a stored URL is a durable reference rather than
-    something a browser can fetch. Anything that is not one of our object URLs
-    — an external link, or a signed URL minted by another backend — is returned
-    untouched, which keeps URLs written before this existed working.
-    """
-    if not file_url:
-        return file_url
-    try:
-        service = get_oss_service()
-        object_key = service.object_key_from_url(file_url)
-        if not object_key:
-            return file_url
-        return service.generate_signed_url(object_key, expires=expires)
-    except Exception:
-        # Never let a signing failure break a read path
-        return file_url
