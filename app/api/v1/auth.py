@@ -18,7 +18,6 @@ from app.core.database import get_async_session
 from app.models.user import User
 from app.models.enums import UserRole, AccountStatus
 from app.utils.activity_logger import log_login, log_logout
-from app.services.oss_service import resign_stored_url
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -230,7 +229,7 @@ async def login_for_access_token(
                 "role": user.role,
                 "company": user.company,
                 "phone": user.phone,
-                "avatar_url": resign_stored_url(user.avatar_url),
+                "avatar_url": user.avatar_url,
                 "is_active": user.is_active
             }
         }
@@ -322,7 +321,7 @@ async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]
         "role": current_user.role,
         "company": current_user.company,
         "phone": current_user.phone,
-        "avatar_url": resign_stored_url(current_user.avatar_url),
+        "avatar_url": current_user.avatar_url,
         "is_active": current_user.is_active
     }
 
@@ -409,7 +408,7 @@ async def update_profile(
                 "role": current_user.role,
                 "company": current_user.company,
                 "phone": current_user.phone,
-                "avatar_url": resign_stored_url(current_user.avatar_url),
+                "avatar_url": current_user.avatar_url,
                 "is_active": current_user.is_active
             }
         }
@@ -498,24 +497,31 @@ async def upload_avatar(
                 detail="Avatar file size must be less than 5MB"
             )
         
-        # Upload to object storage
+        # Upload to OSS
+        from app.services.oss_service import get_oss_service
         file_storage = FileStorageService()
         upload_result = await file_storage.save_file(
             file=file,
             subfolder=f"avatars/user_{current_user.id}"
         )
 
-        # Buckets have a private ACL, and a presigned URL cannot outlive its
-        # backend's limit (7 days on S3). Store the durable object URL and let
-        # the read paths sign it on the way out.
-        current_user.avatar_url = upload_result["url"]
+        # OSS bucket has private ACL — generate a 1-year signed URL so the
+        # browser can load the image directly without credentials
+        oss_service = get_oss_service()
+        signed_url = oss_service.generate_signed_url(
+            upload_result["object_key"],
+            expires=365 * 24 * 3600  # 1 year
+        )
+
+        # Update user's avatar URL
+        current_user.avatar_url = signed_url
         current_user.updated_at = datetime.utcnow()
         await db.commit()
         await db.refresh(current_user)
         
         return {
             "message": "Avatar uploaded successfully",
-            "avatar_url": resign_stored_url(current_user.avatar_url)
+            "avatar_url": current_user.avatar_url
         }
     except HTTPException:
         raise

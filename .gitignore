@@ -140,8 +140,8 @@ uploads/
 *.swo
 
 # Alembic
-# NOTE: migration versions MUST be tracked - Railway/Docker builds run `alembic upgrade head`
-# from the repo contents. Ignoring them ships an empty schema.
+alembic/versions/*.py
+!alembic/versions/.gitkeep
 
 # Database files
 *.sqlite
@@ -166,8 +166,8 @@ private_key.pem
 htmlcov/
 .tox/
 
-# Production deployment
-STAGING_CREDENTIALS.md
+# Documentation (hidden from GitHub)
+docs/
 
 .env.staging
 .env.*

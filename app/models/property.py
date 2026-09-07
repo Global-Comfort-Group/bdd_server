@@ -80,12 +80,6 @@ class Property(Base):
     # Mark/Bookmark for review
     is_marked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # Bookmark flag for quick access/review
 
-    # Excel bulk import flag — True when the property came from an Excel import
-    # and may still have incomplete data. The column is created by migration
-    # 78c157815944; without this mapping, Property(is_imported=True) raises
-    # TypeError and promoting an imported lead fails.
-    is_imported: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
     # Relationships
     submitted_by: Mapped["User"] = relationship(
         "User", 
@@ -108,12 +102,7 @@ class Property(Base):
         cascade="all, delete-orphan"
     )
     nego_tables: Mapped[List["NegoTable"]] = relationship(
-        "NegoTable",
-        back_populates="property",
-        cascade="all, delete-orphan"
-    )
-    kmz_files: Mapped[List["PropertyKMZ"]] = relationship(
-        "PropertyKMZ",
+        "NegoTable", 
         back_populates="property",
         cascade="all, delete-orphan"
     )
