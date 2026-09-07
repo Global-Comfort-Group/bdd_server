@@ -256,6 +256,7 @@ class ExcelImportResult(BaseModel):
     them and supplies the fields the Excel sheet does not carry.
     """
     staged_count: int                 # rows added to the review queue
+    restored_count: int = 0           # discarded leads brought back into it
     skipped_count: int
     duplicate_skipped_count: int = 0  # subset of skipped that were duplicates
     errors: List[str]

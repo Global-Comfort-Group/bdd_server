@@ -151,7 +151,9 @@ async def preview_excel_import(
         )
 
     # Flag against real properties AND leads still sitting in the queue.
-    existing = await staging.existing_keys_and_labels(db)
+    # The preview flags discarded leads so the admin can see a row was
+    # turned down before; ticking it anyway brings that row back.
+    existing = await staging.existing_keys_and_labels(db, include_discarded=True)
     raw_rows = flag_duplicates(raw_rows, existing)
     duplicate_count = sum(1 for r in raw_rows if r.get("duplicate_kind"))
 
@@ -216,7 +218,7 @@ async def confirm_excel_import(
     selected_rows = [r for r in all_rows if r["row_id"] in selected_ids]
     not_found = len(body.row_ids) - len(selected_rows)
 
-    staged_count, duplicate_skipped, errors = await staging.stage_rows(
+    staged_count, restored_count, duplicate_skipped, errors = await staging.stage_rows(
         db,
         rows=selected_rows,
         user_id=current_user.id,
@@ -228,6 +230,7 @@ async def confirm_excel_import(
 
     return ExcelImportResult(
         staged_count=staged_count,
+        restored_count=restored_count,
         skipped_count=not_found + len(errors) + duplicate_skipped,
         duplicate_skipped_count=duplicate_skipped,
         errors=errors,
