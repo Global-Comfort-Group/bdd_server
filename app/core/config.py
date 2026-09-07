@@ -50,6 +50,25 @@ class Settings(BaseSettings):
     OSS_ENDPOINT: str = "oss-ap-southeast-6.aliyuncs.com"
     OSS_REGION: str = "ap-southeast-6"
 
+    # S3-compatible object storage (Railway bucket, MinIO, AWS S3, ...).
+    # When S3_ENDPOINT_URL and credentials are set, this replaces Alibaba OSS as
+    # the storage backend; see app.services.oss_service.get_oss_service.
+    S3_ENDPOINT_URL: Optional[str] = None
+    S3_BUCKET_NAME: Optional[str] = None
+    S3_ACCESS_KEY_ID: Optional[str] = None
+    S3_SECRET_ACCESS_KEY: Optional[str] = None
+    S3_REGION: str = "auto"
+    S3_ADDRESSING_STYLE: str = "virtual"
+
+    def use_s3_storage(self) -> bool:
+        """True when an S3-compatible backend is fully configured."""
+        return bool(
+            self.S3_ENDPOINT_URL
+            and self.S3_BUCKET_NAME
+            and self.S3_ACCESS_KEY_ID
+            and self.S3_SECRET_ACCESS_KEY
+        )
+
     # Google Services (optional)
     GOOGLE_MAPS_API_KEY: Optional[str] = None
     GOOGLE_GEMINI_API_KEY: Optional[str] = None

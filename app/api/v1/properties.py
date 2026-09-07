@@ -23,6 +23,7 @@ from app.services.file_storage import FileStorageService
 from app.services.oss_service import get_oss_service
 from app.api.v1.auth import get_current_user
 from app.core.config import settings
+from app.core.request_dedup import submission_guard
 from app.utils.activity_logger import log_activity
 from app.models.activity_log import ActivityAction, ResourceType
 
@@ -267,15 +268,17 @@ async def create_property(
     """Create a new property."""
     service = PropertyService(db)
 
-    # Check if title number already exists
-    existing = await service.get_property_by_title_number(property_data.title_number)
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="Property with this title number already exists"
-        )
+    async with submission_guard(current_user.id, property_data.model_dump()):
+        # Check if title number already exists
+        existing = await service.get_property_by_title_number(property_data.title_number)
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Property with this title number already exists"
+            )
 
-    new_property = await service.create_property(property_data, current_user.id)
+        new_property = await service.create_property(property_data, current_user.id)
+
     try:
         await log_activity(
             db=db,
