@@ -21,14 +21,19 @@ async def test_create_property(client: AsyncClient, agent_token: str, sample_pro
 @pytest.mark.asyncio
 async def test_create_property_duplicate_title(client: AsyncClient, agent_token: str, sample_property_data: dict):
     """Test property creation with duplicate title number."""
+    from app.core.request_dedup import _reset
+    _reset()
+
     headers = {"Authorization": f"Bearer {agent_token}"}
-    
+
     # Create first property
     response = await client.post("/api/v1/properties/", json=sample_property_data, headers=headers)
     assert response.status_code == 200
-    
-    # Try to create second property with same title number
-    response = await client.post("/api/v1/properties/", json=sample_property_data, headers=headers)
+
+    # Different payload (different description) but same title_number bypasses the dedup guard
+    # and hits the DB-level duplicate check → 400
+    different_data = {**sample_property_data, "description": "A second attempt with the same title number"}
+    response = await client.post("/api/v1/properties/", json=different_data, headers=headers)
     assert response.status_code == 400
 
 
