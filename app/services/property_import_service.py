@@ -28,7 +28,7 @@ from app.models.property_import import (
     PropertyImport,
 )
 from app.schemas.property import PropertyCreate
-from app.services.import_dedupe import import_key
+from app.services.import_dedupe import DISCARDED_SOURCE, import_key
 
 
 def _readable_errors(e: ValidationError) -> str:
@@ -40,12 +40,29 @@ def _readable_errors(e: ValidationError) -> str:
     return "; ".join(parts)
 
 
+# The sheet-derived columns, in one list so the insert and the revive path
+# cannot fall out of step.
+_SHEET_FIELDS = (
+    "referred_by", "referral_type", "lot_area", "building_area", "lease_raw",
+    "sale_raw", "status_hint", "price", "lease_price", "property_type",
+    "zoning_classification", "transaction_status", "title_number", "floors",
+    "rooms", "parking_slots", "description",
+)
+
+
 async def existing_keys_and_labels(
     db: AsyncSession,
+    include_discarded: bool = False,
 ) -> List[Tuple[int, Optional[str], Optional[str], str]]:
     """Everything an incoming row could duplicate: real properties, plus
     staging rows still awaiting review. A lead imported last month and not yet
-    promoted is still a duplicate for this month's file."""
+    promoted is still a duplicate for this month's file.
+
+    Discarded leads are included only for the preview, which flags them so the
+    admin can see the row was turned down before and decide again. They are
+    left out of the set `stage_rows` blocks on, because ticking such a row is
+    how a discarded lead is brought back.
+    """
     props = (await db.execute(select(Property.id, Property.name, Property.address))).all()
     pending = (
         await db.execute(
@@ -53,10 +70,19 @@ async def existing_keys_and_labels(
             .where(PropertyImport.review_status == IMPORT_PENDING)
         )
     ).all()
-    return (
+    rows = (
         [(p.id, p.name, p.address, "database") for p in props]
         + [(i.id, i.name, i.address, "import queue") for i in pending]
     )
+    if include_discarded:
+        discarded = (
+            await db.execute(
+                select(PropertyImport.id, PropertyImport.name, PropertyImport.address)
+                .where(PropertyImport.review_status == IMPORT_DISCARDED)
+            )
+        ).all()
+        rows += [(d.id, d.name, d.address, DISCARDED_SOURCE) for d in discarded]
+    return rows
 
 
 async def stage_rows(
@@ -68,12 +94,26 @@ async def stage_rows(
     rows, so a client that ignores the preview flags still cannot create a
     second copy.
 
-    Returns (staged_count, duplicate_skipped, errors).
+    A row matching a lead that was DISCARDED is a third case. Discarding says
+    "not this one", not "never speak of it again", so re-importing revives the
+    original row rather than inserting a second copy of it or refusing
+    outright. Without this the queue grew a fresh row on every re-upload,
+    because discarded leads were invisible to the dedupe key entirely.
+
+    Returns (staged_count, restored_count, duplicate_skipped, errors).
     """
     existing = await existing_keys_and_labels(db)
     seen_keys = {import_key(name, address) for _id, name, address, _src in existing}
 
+    discarded_records = (
+        await db.execute(
+            select(PropertyImport).where(PropertyImport.review_status == IMPORT_DISCARDED)
+        )
+    ).scalars().all()
+    discarded_by_key = {import_key(d.name, d.address): d for d in discarded_records}
+
     staged = 0
+    restored = 0
     duplicate_skipped = 0
     errors: List[str] = []
 
@@ -92,6 +132,21 @@ async def stage_rows(
                 duplicate_skipped += 1
                 continue
             seen_keys.add(key)
+
+            revived = discarded_by_key.pop(key, None)
+            if revived is not None:
+                # Bring the original row back and refresh it from the file just
+                # uploaded, so a lead restored this way carries this month's
+                # figures rather than the ones it was discarded with.
+                revived.review_status = IMPORT_PENDING
+                for field in _SHEET_FIELDS:
+                    setattr(revived, field, row.get(field))
+                revived.sheet_name = row.get("sheet_name")
+                revived.row_number = row.get("row_number")
+                revived.source_file = source_file
+                revived.imported_by_id = user_id
+                restored += 1
+                continue
 
             db.add(
                 PropertyImport(
@@ -127,10 +182,10 @@ async def stage_rows(
         except Exception as e:  # pragma: no cover - defensive
             errors.append(f"Row {row.get('row_id', '?')}: {str(e)}")
 
-    if staged:
+    if staged or restored:
         await db.commit()
 
-    return staged, duplicate_skipped, errors
+    return staged, restored, duplicate_skipped, errors
 
 
 def derived_transaction_status(record: PropertyImport) -> Optional[TransactionStatus]:

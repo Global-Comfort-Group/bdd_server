@@ -115,6 +115,12 @@ def _match_score(
     return min(name_score, addr_score)
 
 
+# Source label for a lead that was imported and then discarded. It is matched
+# by value rather than sniffed out of the prose label, so the two sides cannot
+# drift apart.
+DISCARDED_SOURCE = "discarded leads"
+
+
 def flag_duplicates(
     rows: List[Dict[str, Any]],
     existing: Sequence[Tuple[int, Optional[str], Optional[str], str]],
@@ -128,7 +134,7 @@ def flag_duplicates(
     both are passed in together and the label says which was hit.
 
     Adds three keys to every row:
-      ``duplicate_kind``  — "existing" | "in_file" | None
+      ``duplicate_kind``  — "existing" | "discarded" | "in_file" | None
       ``duplicate_of``    — human-readable description of what it matched
       ``duplicate_score`` — similarity of the weaker of the two signals
 
@@ -164,8 +170,14 @@ def flag_duplicates(
         key = import_key(name, address)
         hit = existing_by_key.get(key)
         if hit:
-            row["duplicate_kind"] = "existing"
-            row["duplicate_of"] = f"Already in {hit[2]}: {hit[1]}"
+            _pid, hit_label, hit_source = hit
+            discarded = hit_source == DISCARDED_SOURCE
+            row["duplicate_kind"] = "discarded" if discarded else "existing"
+            row["duplicate_of"] = (
+                f"Discarded earlier: {hit_label}"
+                if discarded
+                else f"Already in {hit_source}: {hit_label}"
+            )
             row["duplicate_score"] = 1.0
             continue
 
@@ -184,7 +196,10 @@ def flag_duplicates(
         for _pid, ex_name, ex_addr, ex_label, ex_source in existing_norm:
             score = _match_score(norm_name, norm_addr, ex_name, ex_addr)
             if score is not None and (best is None or score > best[0]):
-                best = (score, "existing", f"Likely already in {ex_source}: {ex_label}")
+                if ex_source == DISCARDED_SOURCE:
+                    best = (score, "discarded", f"Likely discarded earlier: {ex_label}")
+                else:
+                    best = (score, "existing", f"Likely already in {ex_source}: {ex_label}")
 
         # 4. Fuzzy match against earlier rows in this file.
         for prev_name, prev_addr, prev_row in seen_norm:
