@@ -140,8 +140,8 @@ uploads/
 *.swo
 
 # Alembic
-alembic/versions/*.py
-!alembic/versions/.gitkeep
+# NOTE: migration versions MUST be tracked - Railway/Docker builds run `alembic upgrade head`
+# from the repo contents. Ignoring them ships an empty schema.
 
 # Database files
 *.sqlite
