@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
-from pydantic import BaseModel, model_validator, validator
+from pydantic import BaseModel, Field, model_validator, validator
 
 from app.models.enums import PropertyType, PropertyStatus, TransactionStatus
 from app.models.types import ZoningClassification
@@ -310,6 +310,34 @@ class PromotionResult(BaseModel):
     property_id: int
     property_name: str
     import_row: PropertyImportRead
+
+
+class BulkPromoteRequest(BaseModel):
+    """Leads to promote as they stand.
+
+    Deliberately carries no admin values. Bulk promotion acts only on rows that
+    are already complete — a row from the TEMPLATE (Complete) sheet arrives with
+    everything `properties` needs. Applying one set of typed-in values across a
+    whole selection is what the staging table exists to prevent, so an
+    incomplete row is reported back instead, to be promoted on its own.
+    """
+    import_ids: List[int] = Field(..., min_length=1, max_length=200)
+
+
+class BulkPromoteSkip(BaseModel):
+    """One lead the bulk promote left alone, and why."""
+    import_id: int
+    name: str
+    reason: str
+    missing_required: List[str] = []
+
+
+class BulkPromotionResult(BaseModel):
+    """Outcome per lead. Promotions commit one at a time, so this reports what
+    actually happened rather than implying the batch succeeded or failed as a
+    whole."""
+    promoted: List[PromotionResult]
+    skipped: List[BulkPromoteSkip]
 
 
 class PropertyImportListResponse(BaseModel):

@@ -9,7 +9,8 @@ requires. So importing does not create properties; it fills a review queue.
   2. POST /admin/properties/import/confirm            stage selected rows into the queue
   3. GET  /admin/properties/import/queue              list staged leads
   4. POST /admin/properties/import/queue/{id}/promote supply the missing fields -> Property
-  5. POST /admin/properties/import/queue/{id}/discard drop a lead
+  5. POST /admin/properties/import/queue/promote-bulk  promote every complete lead
+  6. POST /admin/properties/import/queue/{id}/discard drop a lead
 
 Nothing between steps 2 and 4 invents a value: a field the sheet lacks stays
 NULL until a human supplies it at promotion.
@@ -37,6 +38,9 @@ from app.services.excel_import_service import parse_excel_properties
 from app.services.import_dedupe import flag_duplicates
 from app.services import property_import_service as staging
 from app.schemas.property import (
+    BulkPromoteRequest,
+    BulkPromoteSkip,
+    BulkPromotionResult,
     ExcelParseResponse,
     ExcelPropertyPreviewRow,
     ExcelImportConfirmRequest,
@@ -292,6 +296,96 @@ async def promote_import(
         property_name=prop.name,
         import_row=_to_read(record),
     )
+
+
+@router.post("/queue/promote-bulk", response_model=BulkPromotionResult)
+async def promote_imports_bulk(
+    body: BulkPromoteRequest,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(current_admin_user),
+):
+    """Promote every selected lead that is already complete; report the rest.
+
+    No admin values are accepted here on purpose. A row from the TEMPLATE
+    (Complete) sheet already carries everything `properties` requires, so it can
+    be promoted untouched. A row from a monthly sheet does not, and applying one
+    typed-in price or zoning across a whole selection would invent data for
+    every row but the one it was meant for — the thing the staging table exists
+    to prevent. Such rows come back in `skipped` with the fields they still
+    need, to be promoted individually.
+
+    Each promotion commits on its own, so a row that fails midway leaves the
+    rows before it promoted. That is reported per row rather than rolled back:
+    the properties already created are real and correct, and undoing them would
+    lose work an admin would only have to redo.
+    """
+    records = (
+        await db.execute(
+            select(PropertyImport).where(PropertyImport.id.in_(body.import_ids))
+        )
+    ).scalars().all()
+    found = {record.id: record for record in records}
+
+    promoted: List[PromotionResult] = []
+    skipped: List[BulkPromoteSkip] = []
+
+    # Walk the ids the caller sent, in their order, so the report reads the way
+    # the queue looked on screen.
+    for import_id in body.import_ids:
+        record = found.get(import_id)
+        if record is None:
+            skipped.append(
+                BulkPromoteSkip(
+                    import_id=import_id,
+                    name=f"Row {import_id}",
+                    reason="This import row no longer exists.",
+                )
+            )
+            continue
+
+        if record.review_status != IMPORT_PENDING:
+            skipped.append(
+                BulkPromoteSkip(
+                    import_id=import_id,
+                    name=record.name,
+                    reason=f"Already {record.review_status.lower()}.",
+                )
+            )
+            continue
+
+        missing = _missing_required(record)
+        if missing:
+            skipped.append(
+                BulkPromoteSkip(
+                    import_id=import_id,
+                    name=record.name,
+                    reason="The sheet did not supply everything this lead needs.",
+                    missing_required=missing,
+                )
+            )
+            continue
+
+        try:
+            prop = await staging.promote(db, record, {}, current_user.id)
+        except staging.PromotionError as e:
+            # Most often a duplicate that appeared since the import — possibly
+            # one an earlier row in this same batch just created, since every
+            # promotion commits before the next is checked.
+            skipped.append(
+                BulkPromoteSkip(import_id=import_id, name=record.name, reason=str(e))
+            )
+            continue
+
+        await db.refresh(record)
+        promoted.append(
+            PromotionResult(
+                property_id=prop.id,
+                property_name=prop.name,
+                import_row=_to_read(record),
+            )
+        )
+
+    return BulkPromotionResult(promoted=promoted, skipped=skipped)
 
 
 @router.post("/queue/{import_id}/discard", response_model=PropertyImportRead)
