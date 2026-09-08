@@ -22,6 +22,7 @@ from app.api.admin import admin_router
 from app.api.v1.uploads import router as uploads_router
 from app.api.v1.address import router as address_router
 from app.api.v1.property_kmz import router as property_kmz_router
+from app.api.v1.files import router as files_router
 
 
 @asynccontextmanager
@@ -179,6 +180,12 @@ app.include_router(
     property_kmz_router,
     prefix=settings.API_V1_PREFIX,
     tags=["property-kmz"]
+)
+
+app.include_router(
+    files_router,
+    prefix=settings.API_V1_PREFIX,
+    tags=["files"]
 )
 
 # Add exception handlers
