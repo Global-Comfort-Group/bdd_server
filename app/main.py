@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+from typing import Optional
 import time
 import logging
 
@@ -221,6 +222,44 @@ async def global_exception_handler(request: Request, exc: Exception):
             "message": "An unexpected error occurred. Please try again later."
         }
     )
+
+
+# Nine routes are served with a trailing slash ("/properties/", "/admin/users/"
+# and so on). Starlette answers the slashless form with a 307 whose Location is
+# absolute, built from the request's Host header — which behind a reverse proxy
+# is this service's own hostname, not the one the browser is talking to.
+#
+# That makes the redirect cross-origin, and `fetch` drops the Authorization
+# header when it follows one. The retry arrives unauthenticated, the backend
+# answers 401, and the frontend treats that as an expired session and signs the
+# user out. Next.js normalises the slash away before proxying, so the browser
+# cannot avoid this by asking for the slashed path — it never survives the hop.
+#
+# Matching the slashed route directly removes the redirect entirely, which works
+# whatever sits in front of us. Only paths that are genuinely routes are
+# rewritten, so a real 404 is still a 404.
+_slashed_routes: Optional[set] = None
+
+
+def _routes_served_with_a_slash() -> set:
+    """Route paths ending in "/", computed once, after all routers are in."""
+    global _slashed_routes
+    if _slashed_routes is None:
+        _slashed_routes = {
+            route.path
+            for route in app.routes
+            if getattr(route, "path", "").endswith("/")
+        }
+    return _slashed_routes
+
+
+@app.middleware("http")
+async def match_routes_whose_trailing_slash_was_stripped(request: Request, call_next):
+    """Route "/admin/users" to "/admin/users/" instead of redirecting to it."""
+    path = request.scope.get("path", "")
+    if not path.endswith("/") and f"{path}/" in _routes_served_with_a_slash():
+        request.scope["path"] = f"{path}/"
+    return await call_next(request)
 
 
 # Add middleware for request logging
