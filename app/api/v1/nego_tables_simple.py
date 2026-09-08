@@ -8,7 +8,11 @@ from app.models.user import User
 from app.api.v1.auth import get_current_user
 from app.api.v1.properties_simple import MOCK_PROPERTIES
 
-router = APIRouter()
+# Every route here needs a signed-in caller. Declaring it on the router
+# rather than per-handler means a route added later is protected by
+# default — several here were open to anyone precisely because the
+# dependency was easy to leave off one signature.
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # In-memory storage for created nego tables (in production, this would be a database)
 CREATED_NEGO_TABLES = {}
