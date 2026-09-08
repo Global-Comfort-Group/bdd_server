@@ -19,7 +19,11 @@ from app.models.activity_log import ActivityAction, ResourceType
 from datetime import datetime
 from decimal import Decimal
 
-router = APIRouter()
+# Every route here needs a signed-in caller. Declaring it on the router
+# rather than per-handler means a route added later is protected by
+# default — several here were open to anyone precisely because the
+# dependency was easy to leave off one signature.
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # Mock property data
 MOCK_PROPERTIES = {
@@ -230,7 +234,7 @@ async def get_properties(
 async def get_property_statistics(
     request: Request,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    current_user: User = Depends(get_current_user)
 ):
     """Get property statistics from mock storage."""
     
@@ -797,7 +801,10 @@ async def create_property(
     }
 
 @router.post("/sync-to-database")
-async def sync_properties_to_database(db: AsyncSession = Depends(get_async_session)):
+async def sync_properties_to_database(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
     """Sync all mock properties to the database so they appear in All Properties page"""
     try:
         property_service = PropertyService(db)

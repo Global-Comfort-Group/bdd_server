@@ -65,15 +65,6 @@ def _serialize_attachment_with_signed_url(att) -> dict:
 
 router = APIRouter(prefix="/properties", tags=["properties"])
 
-# Optional authentication dependency - returns None if not authenticated
-async def get_current_user_optional() -> Optional[User]:
-    """Get current user if authenticated, otherwise return None"""
-    try:
-        return await get_current_user()
-    except:
-        return None
-
-
 @router.get("/")
 async def list_properties(
     # Pagination
@@ -103,7 +94,7 @@ async def list_properties(
     property_type: Optional[PropertyType] = None,
     transaction_status: Optional[TransactionStatus] = None,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
     """Paginated, filterable list of properties.
 
@@ -114,7 +105,7 @@ async def list_properties(
     service = PropertyService(db)
 
     # Non-BDD users can only see their own properties unless they're brokers or admins
-    if current_user and current_user.role.value not in ["BDD_USER", "ADMIN"]:
+    if current_user.role.value not in ["BDD_USER", "ADMIN"]:
         if submitted_by_id is None:
             submitted_by_id = current_user.id
         elif submitted_by_id != current_user.id and current_user.role.value != "BROKER":
@@ -298,7 +289,7 @@ async def create_property(
 async def get_property(
     property_id: int,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
     """Get a specific property by ID with camelCase fields for client compatibility."""
     service = PropertyService(db)
@@ -307,9 +298,8 @@ async def get_property(
     if not property_obj:
         raise HTTPException(status_code=404, detail="Property not found")
     
-    # Check permissions (skip if no authentication for development)
-    if (current_user and 
-        current_user.role.value not in ["BDD_USER", "ADMIN"] and 
+    # Check permissions
+    if (current_user.role.value not in ["BDD_USER", "ADMIN"] and 
         property_obj.submitted_by_id != current_user.id and
         property_obj.reviewer_id != current_user.id):
         raise HTTPException(status_code=403, detail="Not authorized to view this property")

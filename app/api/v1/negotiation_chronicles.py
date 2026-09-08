@@ -33,7 +33,11 @@ def _sign_attachment_url(attachment_data: dict) -> dict:
         pass
     return attachment_data
 
-router = APIRouter()
+# Every route here needs a signed-in caller. Declaring it on the router
+# rather than per-handler means a route added later is protected by
+# default — several here were open to anyone precisely because the
+# dependency was easy to leave off one signature.
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 @router.post("/upload/{nego_table_id}", response_model=FileUploadResponse)
 async def upload_negotiation_chronicle(
