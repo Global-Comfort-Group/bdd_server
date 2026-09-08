@@ -105,11 +105,15 @@ async def list_properties(
     service = PropertyService(db)
 
     # Non-BDD users can only see their own properties unless they're brokers or admins
+    # BDD staff and admins see everything; brokers and agents see only what they
+    # submitted. BROKER used to be exempt from the second branch, so a broker
+    # could read another user's properties just by naming them in the filter —
+    # restricted by default, but not if they asked. Now the role decides, not
+    # the query.
     if current_user.role.value not in ["BDD_USER", "ADMIN"]:
-        if submitted_by_id is None:
-            submitted_by_id = current_user.id
-        elif submitted_by_id != current_user.id and current_user.role.value != "BROKER":
+        if submitted_by_id not in (None, current_user.id):
             raise HTTPException(status_code=403, detail="Not authorized to view other users' properties")
+        submitted_by_id = current_user.id
 
     # Resolve pagination — explicit skip/limit wins, otherwise derive from page/page_size
     if skip is not None or limit is not None:
