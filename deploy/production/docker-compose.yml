@@ -1,0 +1,77 @@
+name: bdd-local
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: bdd-db-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: bdd_production_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [bdd-network]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bdd_production_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bdd-backend-local
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - /opt/bdd-data/uploads:/app/uploads
+      - ./backend/logs:/app/logs
+    networks: [bdd-network]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${MAPS_KEY}
+        NEXT_PUBLIC_API_URL: https://bdd.hotelsogo.com
+        NEXT_PUBLIC_API_BASE_URL: https://bdd.hotelsogo.com/api/v1
+    container_name: bdd-frontend-local
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXTAUTH_URL=https://bdd.hotelsogo.com
+      - INTERNAL_API_URL=http://backend:8000
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${MAPS_KEY}
+      - NEXT_PUBLIC_API_URL=https://bdd.hotelsogo.com
+      - NEXT_PUBLIC_API_BASE_URL=https://bdd.hotelsogo.com/api/v1
+    depends_on: [backend]
+    networks: [bdd-network]
+
+  nginx:
+    image: nginx:alpine
+    container_name: bdd-nginx-local
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/bdd.conf:/etc/nginx/conf.d/default.conf:ro,z
+      - ./certbot/www:/usr/share/nginx/html/certbot:ro,z
+      - ./certbot/conf:/etc/letsencrypt:ro,z
+    depends_on: [frontend, backend]
+    networks: [bdd-network]
+
+volumes:
+  pgdata:
+
+networks:
+  bdd-network:
+    driver: bridge
